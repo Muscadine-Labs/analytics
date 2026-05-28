@@ -30,7 +30,12 @@ type GraphAdapter = {
   assets: string | null;
   type: AdapterType;
   factory?: { address?: string | null } | null;
-  metaMorpho?: { address?: string | null; name?: string | null; symbol?: string | null } | null;
+  metaMorpho?: {
+    address?: string | null;
+    name?: string | null;
+    symbol?: string | null;
+    state?: { apy?: number | null; netApy?: number | null; weeklyNetApy?: number | null } | null;
+  } | null;
   positions?: {
     items: Array<{
       state?: {
@@ -50,6 +55,7 @@ type GraphVaultResponse = {
   vault?: {
     address?: string | null;
     totalAssetsUsd?: number | null;
+    avgNetApy?: number | null;
     idleAssets?: string | number | null;
     idleAssetsUsd?: number | null;
     liquidityUsd?: number | null;
@@ -87,6 +93,8 @@ export type V2AdapterRiskData = {
   isLiquidityAdapter?: boolean;
   underlyingVault?: V2UnderlyingVault | null;
   underlyingVaultAddress?: string | null;
+  /** Vault or position net APY (0–1, Morpho API scale). */
+  apy?: number | null;
 };
 
 export type V2IdleAllocation = {
@@ -104,6 +112,8 @@ export type V2VaultRiskResponse = {
   /** Assets held in the vault contract, not deployed to any adapter */
   idle: V2IdleAllocation;
   adapters: V2AdapterRiskData[];
+  /** V2 vault net APY (0–1). */
+  vaultNetApy?: number | null;
 };
 
 const VAULT_V2_RISK_QUERY = gql`
@@ -111,6 +121,7 @@ const VAULT_V2_RISK_QUERY = gql`
     vault: vaultV2ByAddress(address: $address, chainId: $chainId) {
       address
       totalAssetsUsd
+      avgNetApy
       idleAssets
       idleAssetsUsd
       liquidityUsd
@@ -124,7 +135,12 @@ const VAULT_V2_RISK_QUERY = gql`
           assetsUsd
           type
           ... on MetaMorphoAdapter {
-            metaMorpho { address name symbol }
+            metaMorpho {
+              address
+              name
+              symbol
+              state { apy netApy weeklyNetApy }
+            }
           }
           ... on MorphoMarketV1Adapter {
             positions(first: $positionLimit) {
@@ -179,6 +195,30 @@ const VAULT_V2_RISK_QUERY = gql`
     }
   }
 `;
+
+/** Underlying V1 vault yield for Supply APY column (Morpho state.apy = supply-side vault APY). */
+function pickUnderlyingVaultSupplyApy(state?: {
+  apy?: number | null;
+  netApy?: number | null;
+  weeklyNetApy?: number | null;
+} | null): number | null {
+  if (state?.apy != null && Number.isFinite(state.apy)) return state.apy;
+  if (state?.netApy != null && Number.isFinite(state.netApy)) return state.netApy;
+  if (state?.weeklyNetApy != null && Number.isFinite(state.weeklyNetApy)) return state.weeklyNetApy;
+  return null;
+}
+
+function weightedMarketSupplyApy(
+  markets: Array<{ allocationUsd?: number; market?: { state?: { supplyApy?: number | null } | null } }>
+): number | null {
+  const totalAlloc = markets.reduce((s, m) => s + (m.allocationUsd ?? 0), 0);
+  if (totalAlloc <= 0) return null;
+  const weighted = markets.reduce(
+    (s, m) => s + ((m.market?.state?.supplyApy ?? 0) * (m.allocationUsd ?? 0)),
+    0
+  );
+  return weighted / totalAlloc;
+}
 
 function getGradeFromScore(score: number): MarketRiskGrade {
   if (score >= 93) return 'A+';
@@ -262,6 +302,7 @@ async function computeAdapterRisk(
 
     const { weightedScore, grade } = computeWeightedRisk(marketRisks);
     const vaultName = adapter.metaMorpho.name ?? adapter.metaMorpho.symbol ?? 'MetaMorpho Vault';
+    const apy = pickUnderlyingVaultSupplyApy(adapter.metaMorpho.state);
 
     return {
       adapterAddress: adapter.address,
@@ -271,6 +312,7 @@ async function computeAdapterRisk(
       allocationAssets: adapter.assets ?? null,
       riskScore: weightedScore,
       riskGrade: grade,
+      apy,
       markets: [],
       underlyingVault: {
         address: adapter.metaMorpho.address,
@@ -308,6 +350,7 @@ async function computeAdapterRisk(
     );
 
     const { weightedScore, grade } = computeWeightedRisk(marketRisks);
+    const apy = weightedMarketSupplyApy(marketRisks);
 
     return {
       adapterAddress: adapter.address,
@@ -317,6 +360,7 @@ async function computeAdapterRisk(
       allocationAssets: adapter.assets ?? null,
       riskScore: weightedScore,
       riskGrade: grade,
+      apy,
       markets: marketRisks,
       isLiquidityAdapter,
     };
@@ -439,6 +483,7 @@ export async function GET(
         assetsUsd: idleAssetsUsd,
         assets: idleAssets,
       },
+      vaultNetApy: data.vault.avgNetApy ?? null,
       adapters: adapterRisks,
     };
 

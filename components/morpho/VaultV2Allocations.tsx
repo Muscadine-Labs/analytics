@@ -107,6 +107,8 @@ export function VaultV2Allocations({ vaultAddress, preloadedRisk }: VaultV2Alloc
           0
         );
         if (Number.isFinite(sumLiq)) adapterLiquidity = sumLiq;
+      } else if (isVaultAdapter && adapter.apy != null) {
+        adapterSupplyApy = adapter.apy;
       }
 
       const allocAssets = adapter.allocationAssets ?? null;
