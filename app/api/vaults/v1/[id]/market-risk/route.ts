@@ -4,24 +4,19 @@ import { handleApiError, AppError } from '@/lib/utils/error-handler';
 import { createRateLimitMiddleware, RATE_LIMIT_REQUESTS_PER_MINUTE, MINUTE_MS } from '@/lib/utils/rate-limit';
 import { getAddress, isAddress } from 'viem';
 import { fetchV1VaultMarkets } from '@/lib/morpho/query-v1-vault-markets';
-import { computeV1MarketRiskScores, isMarketIdle } from '@/lib/morpho/compute-v1-market-risk';
-import { getOracleTimestampData } from '@/lib/morpho/oracle-utils';
+import {
+  computeV1MarketRiskScores,
+  isMarketIdle,
+  type MarketRiskScores,
+} from '@/lib/morpho/compute-v1-market-risk';
+import { getOracleTimestampData, getOracleFeedHintsFromMarket } from '@/lib/morpho/oracle-utils';
 import { getIRMTargetUtilizationWithFallback } from '@/lib/morpho/irm-utils';
 import type { V1VaultMarketData } from '@/lib/morpho/query-v1-vault-markets';
 import type { Address } from 'viem';
 
 export interface V1MarketRiskData {
   market: V1VaultMarketData;
-  scores: {
-    liquidationHeadroomScore: number;
-    utilizationScore: number;
-    coverageRatioScore: number;
-    oracleScore: number;
-    marketRiskScore: number;
-    grade: string;
-    realizedBadDebt?: number | null;
-    unrealizedBadDebt?: number | null;
-  } | null; // null for idle markets
+  scores: MarketRiskScores | null; // null for idle markets
   oracleTimestampData?: {
     chainlinkAddress: string | null;
     updatedAt: number | null; // Unix timestamp in seconds
@@ -90,15 +85,10 @@ export async function GET(
         };
       }
 
-      // Extract baseFeedOne address from GraphQL oracle.data if available
-      const baseFeedOneAddress = market.oracle?.data?.baseFeedOne?.address
-        ? (market.oracle.data.baseFeedOne.address as Address)
-        : null;
-
       const [oracleTimestampData, targetUtilization] = await Promise.all([
         getOracleTimestampData(
           market.oracleAddress ? (market.oracleAddress as Address) : null,
-          baseFeedOneAddress
+          getOracleFeedHintsFromMarket(market)
         ),
         getIRMTargetUtilizationWithFallback(
           market.irmAddress ? (market.irmAddress as Address) : null

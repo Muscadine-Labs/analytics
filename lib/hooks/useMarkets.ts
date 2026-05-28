@@ -34,12 +34,18 @@ export interface MarketsSuppliedResponse {
 }
 
 async function fetchMarketsSupplied(): Promise<MarketsSuppliedResponse> {
-  // TODO: Implement API endpoint for markets supplied data
-  // For now, return empty data to allow build to pass
-  return {
-    markets: [],
-    vaultAllocations: [],
-  };
+  const response = await fetch('/api/markets-supplied', {
+    cache: 'no-store',
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    const message =
+      typeof body === 'object' && body !== null && 'message' in body
+        ? String((body as { message: unknown }).message)
+        : 'Failed to fetch markets supplied data';
+    throw new Error(message);
+  }
+  return response.json();
 }
 
 export function useMarketsSupplied() {

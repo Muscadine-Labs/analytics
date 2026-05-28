@@ -27,7 +27,7 @@ type GraphCap = {
     | {
         __typename?: 'MarketV1CapData';
         adapterAddress?: string | null;
-        market?: { uniqueKey?: string | null } | null;
+        market?: { marketId?: string | null } | null;
       }
     | { __typename?: 'CollateralCapData'; collateralAddress?: string | null }
     | { __typename?: string | null }
@@ -38,6 +38,8 @@ type GraphCap = {
 type GraphVaultGovernanceResponse = {
   vault?: {
     address?: string | null;
+    idleAssets?: string | number | null;
+    idleAssetsUsd?: number | null;
     owner?: { address?: string | null } | null;
     curator?: { address?: string | null } | null;
     allocators?: Array<{ allocator?: { address?: string | null } | null } | null> | null;
@@ -49,6 +51,11 @@ type GraphVaultGovernanceResponse = {
   } | null;
 };
 
+export type VaultV2IdleAllocation = {
+  assetsUsd: number;
+  assets: string | null;
+};
+
 export type VaultV2GovernanceResponse = {
   vaultAddress: string;
   owner: string | null;
@@ -56,6 +63,7 @@ export type VaultV2GovernanceResponse = {
   allocators: string[];
   sentinels: string[];
   liquidityAdapter: AdapterInfo | null;
+  idle: VaultV2IdleAllocation;
   adapters: AdapterInfo[];
   caps: CapInfo[];
   timelocks: TimelockInfo[];
@@ -92,6 +100,8 @@ const VAULT_V2_GOVERNANCE_QUERY = gql`
   query VaultV2Governance($address: String!, $chainId: Int!, $adapterLimit: Int!) {
     vault: vaultV2ByAddress(address: $address, chainId: $chainId) {
       address
+      idleAssets
+      idleAssetsUsd
       owner { address }
       curator { address }
       allocators { allocator { address } }
@@ -102,7 +112,6 @@ const VAULT_V2_GOVERNANCE_QUERY = gql`
         type
         assets
         assetsUsd
-        factory { address }
         ... on MetaMorphoAdapter {
           metaMorpho { address name symbol }
         }
@@ -114,7 +123,6 @@ const VAULT_V2_GOVERNANCE_QUERY = gql`
           type
           assets
           assetsUsd
-          factory { address }
           ... on MetaMorphoAdapter {
             metaMorpho { address name symbol }
           }
@@ -133,7 +141,7 @@ const VAULT_V2_GOVERNANCE_QUERY = gql`
             }
             ... on MarketV1CapData {
               adapterAddress
-              market { uniqueKey }
+              market { marketId }
             }
             ... on CollateralCapData {
               collateralAddress
@@ -208,12 +216,12 @@ function mapCap(graph: GraphCap | null | undefined): CapInfo | null {
     const marketData = graph.data as {
       __typename?: string | null;
       adapterAddress?: string | null;
-      market?: { uniqueKey?: string | null } | null;
+      market?: { marketId?: string | null } | null;
     };
     return {
       ...base,
       adapterAddress: marketData.adapterAddress ?? null,
-      marketKey: marketData.market?.uniqueKey ?? null,
+      marketKey: marketData.market?.marketId ?? null,
     };
   }
 
@@ -317,6 +325,11 @@ export async function GET(
           ?.map((s) => s?.sentinel?.address)
           .filter((addr): addr is string => Boolean(addr)) ?? [],
       liquidityAdapter,
+      idle: {
+        assetsUsd: data.vault.idleAssetsUsd ?? 0,
+        assets:
+          data.vault.idleAssets != null ? String(data.vault.idleAssets) : null,
+      },
       adapters,
       caps,
       timelocks,

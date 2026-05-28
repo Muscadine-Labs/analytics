@@ -19,7 +19,9 @@ export function useVaultRisk(vault?: Pick<VaultDetail, 'allocation'>) {
 
     const metricsByKey = new Map<string, MorphoMarketMetrics>();
     morpho.data.markets.forEach((m) => {
-      if (m.raw?.uniqueKey) metricsByKey.set(m.raw.uniqueKey, m);
+      const marketKey =
+        (m.raw as { marketId?: string }).marketId ?? m.raw?.id;
+      if (marketKey) metricsByKey.set(marketKey, m);
       metricsByKey.set(m.id, m);
     });
 

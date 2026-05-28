@@ -154,7 +154,7 @@ export async function GET(
           address
           name
           symbol
-          whitelisted
+          listed
           metadata {
             description
             forumLink
@@ -174,14 +174,11 @@ export async function GET(
             apy
             netApy
             netApyWithoutRewards
-            avgApy
             avgNetApy
             dailyApy
             dailyNetApy
             weeklyApy
             weeklyNetApy
-            monthlyApy
-            monthlyNetApy
             fee
             rewards {
               asset { address chain { id } }
@@ -193,7 +190,7 @@ export async function GET(
               supplyAssetsUsd
               supplyCap
               market {
-                uniqueKey
+                marketId
                 loanAsset { address name symbol }
                 collateralAsset { address name symbol }
                 oracleAddress
@@ -216,7 +213,7 @@ export async function GET(
             allocationQueues: allocation {
               supplyQueueIndex
               withdrawQueueIndex
-              market { uniqueKey }
+              market { marketId }
             }
           }
           historicalState {
@@ -259,7 +256,7 @@ export async function GET(
           address
           name
           symbol
-          whitelisted
+          listed
           metadata {
             description
             forumLink
@@ -384,7 +381,7 @@ export async function GET(
       address?: string;
       name?: string | null;
       symbol?: string | null;
-      whitelisted?: boolean | null;
+      listed?: boolean | null;
       metadata?: {
         description?: string | null;
         forumLink?: string | null;
@@ -452,7 +449,7 @@ export async function GET(
           supplyAssetsUsd?: number | null;
           supplyCap?: string | null;
           market?: {
-            uniqueKey?: string;
+            marketId?: string;
             loanAsset?: { address?: string | null; name?: string | null; symbol?: string | null } | null;
             collateralAsset?: { address?: string | null; name?: string | null; symbol?: string | null } | null;
             oracleAddress?: string | null;
@@ -475,7 +472,7 @@ export async function GET(
         allocationQueues?: Array<{
           supplyQueueIndex?: number | null;
           withdrawQueueIndex?: number | null;
-          market?: { uniqueKey?: string } | null;
+          market?: { marketId?: string } | null;
         }> | null;
       } | null;
       historicalState?: {
@@ -583,14 +580,14 @@ export async function GET(
         apy: mv?.state?.apy != null ? mv.state.apy * 100 : null,
         netApy: mv?.state?.netApy != null ? mv.state.netApy * 100 : null,
         netApyWithoutRewards: mv?.state?.netApyWithoutRewards != null ? mv.state.netApyWithoutRewards * 100 : null,
-        avgApy: mv?.state?.avgApy != null ? mv.state.avgApy * 100 : null,
+        avgApy: null,
         avgNetApy: mv?.state?.avgNetApy != null ? mv.state.avgNetApy * 100 : null,
         dailyApy: mv?.state?.dailyApy != null ? mv.state.dailyApy * 100 : null,
         dailyNetApy: mv?.state?.dailyNetApy != null ? mv.state.dailyNetApy * 100 : null,
         weeklyApy: mv?.state?.weeklyApy != null ? mv.state.weeklyApy * 100 : null,
         weeklyNetApy: mv?.state?.weeklyNetApy != null ? mv.state.weeklyNetApy * 100 : null,
-        monthlyApy: mv?.state?.monthlyApy != null ? mv.state.monthlyApy * 100 : null,
-        monthlyNetApy: mv?.state?.monthlyNetApy != null ? mv.state.monthlyNetApy * 100 : null,
+        monthlyApy: null,
+        monthlyNetApy: null,
         underlyingYieldApr: mv?.asset?.yield?.apr != null ? mv.asset.yield.apr * 100 : null,
       },
       rewards: isV2
@@ -610,7 +607,7 @@ export async function GET(
         ? [] // V2 vaults don't have allocation in the same format
         : (mv?.state?.allocation || []).map((a: {
             market?: {
-              uniqueKey?: string | null;
+              marketId?: string | null;
               loanAsset?: { address?: string | null; name?: string | null; symbol?: string | null } | null;
               collateralAsset?: { address?: string | null; name?: string | null; symbol?: string | null } | null;
               oracleAddress?: string | null;
@@ -634,7 +631,7 @@ export async function GET(
           }) => {
             try {
               return {
-                marketKey: a.market?.uniqueKey ?? '',
+                marketKey: a.market?.marketId ?? '',
                 loanAssetAddress: a.market?.loanAsset?.address ?? null,
                 loanAssetName: a.market?.loanAsset?.name ?? null,
                 loanAssetSymbol: a.market?.loanAsset?.symbol ?? null,

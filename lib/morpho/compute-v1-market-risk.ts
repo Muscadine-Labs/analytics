@@ -91,6 +91,8 @@ export interface MarketRiskScores {
   oracleScore: number; // [0, 100] - Oracle Freshness & Reliability
   marketRiskScore: number; // [0, 100]
   grade: MarketRiskGrade;
+  /** IRM kink / gold-standard utilization used for scoring (0–1, typically 0.9) */
+  targetUtilization: number;
   realizedBadDebt?: number | null; // Realized bad debt amount (USD) from Morpho GraphQL
   unrealizedBadDebt?: number | null; // Not available in GraphQL schema
 }
@@ -256,9 +258,8 @@ function computeLiquidationHeadroomScore(market: V1VaultMarketData): number {
  * - targetUtilization = IRM kink (default 90% if not available)
  * 
  * Score (continuous):
- * - Best score when utilization is well below target
- * - Score decreases as utilization approaches target
- * - Score decreases faster when utilization exceeds target (riskier)
+ * - Ramps from 80 at 0% utilization to 100 at target (gold standard, typically 90%)
+ * - Decays from 100 when utilization exceeds target
  */
 async function computeUtilizationScore(
   market: V1VaultMarketData,
@@ -290,32 +291,23 @@ async function computeUtilizationScore(
   // Utilization above target = worse (riskier)
   
   if (utilization <= targetUtilization) {
-    // Below or at target: score based on how far below
-    // 0% utilization = 100 score
-    // targetUtilization = 80 score (good, but not perfect)
     if (targetUtilization === 0) {
       return utilization === 0 ? 100 : 0;
     }
-    const progress = utilization / targetUtilization; // 0 to 1
-    return 100 - (progress * 20); // 100 → 80
-  } else {
-    // Above target: score decreases faster
-    // targetUtilization = 80 score
-    // targetUtilization + 5% = 60 score
-    // targetUtilization + 10% = 40 score
-    // targetUtilization + 15% = 20 score
-    // targetUtilization + 20%+ = 0 score
-    const excess = utilization - targetUtilization;
-    const maxExcess = 0.20; // 20% above target = 0 score
-    
-    if (excess >= maxExcess) {
-      return 0;
-    }
-    
-    // Linear decay from 80 to 0 over 20% excess
-    const progress = excess / maxExcess; // 0 to 1
-    return 80 - (progress * 80); // 80 → 0
+    const progress = utilization / targetUtilization;
+    // 0% → 80, gold-standard target (e.g. 90%) → 100
+    return 80 + progress * 20;
   }
+
+  const excess = utilization - targetUtilization;
+  const maxExcess = Math.max(1 - targetUtilization, 0.01);
+
+  if (excess >= maxExcess) {
+    return 0;
+  }
+
+  // 100 at target, 0 at 100% utilization (or target + maxExcess)
+  return 100 - (excess / maxExcess) * 100;
 }
 
 /**
@@ -528,6 +520,7 @@ export async function computeV1MarketRiskScores(
     oracleScore,
     marketRiskScore: finalScore,
     grade: finalGrade,
+    targetUtilization: targetUtil,
     realizedBadDebt: badDebtUsd,
     unrealizedBadDebt: null, // Not available in GraphQL schema
   };

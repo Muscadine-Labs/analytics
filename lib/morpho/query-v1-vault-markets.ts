@@ -20,7 +20,7 @@ const VAULT_V1_MARKETS_QUERY = gql`
           supplyAssetsUsd
           market {
             id
-            uniqueKey
+            marketId
             loanAsset {
               symbol
               decimals
@@ -38,14 +38,16 @@ const VAULT_V1_MARKETS_QUERY = gql`
               type
               data {
                 ... on MorphoChainlinkOracleV2Data {
-                  baseFeedOne {
-                    address
-                  }
+                  baseFeedOne { address }
+                  baseFeedTwo { address }
+                  quoteFeedOne { address }
+                  quoteFeedTwo { address }
                 }
                 ... on MorphoChainlinkOracleData {
-                  baseFeedOne {
-                    address
-                  }
+                  baseFeedOne { address }
+                  baseFeedTwo { address }
+                  quoteFeedOne { address }
+                  quoteFeedTwo { address }
                 }
               }
             }
@@ -92,9 +94,10 @@ export type V1VaultMarketData = {
     address: string;
     type: string; // e.g., "ChainlinkOracleV2"
     data?: {
-      baseFeedOne?: {
-        address: string;
-      } | null;
+      baseFeedOne?: { address: string } | null;
+      baseFeedTwo?: { address: string } | null;
+      quoteFeedOne?: { address: string } | null;
+      quoteFeedTwo?: { address: string } | null;
     } | null;
   } | null;
   irmAddress: string | null;
@@ -132,7 +135,7 @@ export type V1VaultMarketsQueryResponse = {
         supplyAssetsUsd: number | null;
         market: {
           id: string;
-          uniqueKey: string;
+          marketId: string;
           loanAsset: {
             symbol: string;
             decimals: number;
@@ -205,7 +208,7 @@ export async function fetchV1VaultMarkets(
 
       const market: V1VaultMarketData = {
         id: alloc.market.id,
-        uniqueKey: alloc.market.uniqueKey,
+        uniqueKey: alloc.market.marketId,
         loanAsset: alloc.market.loanAsset || { symbol: 'Unknown', decimals: 18, address: '' },
         collateralAsset: alloc.market.collateralAsset || { symbol: 'Unknown', decimals: 18, address: '' },
         oracleAddress: alloc.market.oracleAddress,

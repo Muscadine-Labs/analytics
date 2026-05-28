@@ -35,8 +35,10 @@ export default function VaultDetailPage() {
     const metricsById = new Map<string, MorphoMarketMetrics>();
 
     morpho?.markets?.forEach((market) => {
-      if (market.raw?.uniqueKey) {
-        metricsByUniqueKey.set(market.raw.uniqueKey, market);
+      const marketKey =
+        (market.raw as { marketId?: string }).marketId ?? market.raw?.id;
+      if (marketKey) {
+        metricsByUniqueKey.set(marketKey, market);
       }
       metricsById.set(market.id, market);
     });

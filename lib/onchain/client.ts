@@ -1,44 +1,36 @@
-import { createPublicClient, http, Address, Abi } from 'viem';
+import { createPublicClient, fallback, http, Address, Abi } from 'viem';
 import { base } from 'viem/chains';
 import { logger } from '@/lib/utils/logger';
 
-// Determine RPC URL based on available API keys
-// Priority: ALCHEMY_API_KEY > COINBASE_CDP_API_KEY > demo fallback
-function getRpcUrl(): string {
-  // Alchemy (primary)
+/** RPC endpoints in priority order; public Base RPCs are always included as fallbacks. */
+function getRpcUrls(): string[] {
+  const urls: string[] = [];
+
   if (process.env.ALCHEMY_API_KEY) {
-    return `https://base-mainnet.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`;
+    urls.push(`https://base-mainnet.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`);
   }
-  
-  // Coinbase CDP fallback (if using CDP RPC service)
-  // Format may be: https://base-mainnet.cdp.coinbase.com/v1/[API_KEY]
-  // Or: https://base.cdp.coinbase.com/[API_KEY]
-  // Check Coinbase CDP docs for exact endpoint format
+
   if (process.env.COINBASE_CDP_API_KEY) {
-    return `https://base-mainnet.cdp.coinbase.com/v1/${process.env.COINBASE_CDP_API_KEY}`;
+    urls.push(`https://base-mainnet.cdp.coinbase.com/v1/${process.env.COINBASE_CDP_API_KEY}`);
   }
-  
-  // Demo fallback (rate limited)
-  return 'https://base-mainnet.g.alchemy.com/v2/demo';
+
+  urls.push('https://mainnet.base.org');
+  urls.push('https://base.llamarpc.com');
+
+  return urls;
 }
 
-// Base chain configuration (used by publicClient)
 const baseChain = {
   ...base,
   rpcUrls: {
-    default: {
-      http: [getRpcUrl()],
-    },
-    public: {
-      http: [getRpcUrl()],
-    },
+    default: { http: getRpcUrls() },
+    public: { http: getRpcUrls() },
   },
 };
 
-// Public client for risk (oracle, IRM) and overview (timelock) reads only
 export const publicClient = createPublicClient({
   chain: baseChain,
-  transport: http(),
+  transport: fallback(getRpcUrls().map((url) => http(url))),
 });
 
 // Helper function to safely read contract data

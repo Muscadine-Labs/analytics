@@ -14,7 +14,11 @@ import {
   type MarketRiskScores,
 } from '@/lib/morpho/compute-v1-market-risk';
 import { getIRMTargetUtilizationWithFallback } from '@/lib/morpho/irm-utils';
-import { getOracleTimestampData, type OracleTimestampData } from '@/lib/morpho/oracle-utils';
+import {
+  getOracleTimestampData,
+  getOracleFeedHintsFromMarket,
+  type OracleTimestampData,
+} from '@/lib/morpho/oracle-utils';
 import type { Address } from 'viem';
 
 type AdapterType = 'MetaMorphoAdapter' | 'MorphoMarketV1Adapter' | 'Unknown';
@@ -46,9 +50,11 @@ type GraphVaultResponse = {
   vault?: {
     address?: string | null;
     totalAssetsUsd?: number | null;
+    idleAssets?: string | number | null;
     idleAssetsUsd?: number | null;
     liquidityUsd?: number | null;
     asset?: { symbol?: string; decimals?: number } | null;
+    liquidityAdapter?: { address?: string | null } | null;
     adapters?: {
       items?: Array<GraphAdapter | null> | null;
     } | null;
@@ -63,6 +69,12 @@ export type V2MarketRiskData = {
   oracleTimestampData?: OracleTimestampData | null;
 };
 
+export type V2UnderlyingVault = {
+  address: string;
+  name: string | null;
+  symbol: string | null;
+};
+
 export type V2AdapterRiskData = {
   adapterAddress: string;
   adapterType: AdapterType;
@@ -72,7 +84,14 @@ export type V2AdapterRiskData = {
   riskScore: number;
   riskGrade: MarketRiskGrade;
   markets: V2MarketRiskData[];
+  isLiquidityAdapter?: boolean;
+  underlyingVault?: V2UnderlyingVault | null;
   underlyingVaultAddress?: string | null;
+};
+
+export type V2IdleAllocation = {
+  assetsUsd: number;
+  assets: string | null;
 };
 
 export type V2VaultRiskResponse = {
@@ -81,6 +100,9 @@ export type V2VaultRiskResponse = {
   vaultRiskScore: number;
   vaultRiskGrade: MarketRiskGrade;
   vaultAsset: { symbol: string; decimals: number } | null;
+  liquidityAdapterAddress: string | null;
+  /** Assets held in the vault contract, not deployed to any adapter */
+  idle: V2IdleAllocation;
   adapters: V2AdapterRiskData[];
 };
 
@@ -89,9 +111,11 @@ const VAULT_V2_RISK_QUERY = gql`
     vault: vaultV2ByAddress(address: $address, chainId: $chainId) {
       address
       totalAssetsUsd
+      idleAssets
       idleAssetsUsd
       liquidityUsd
       asset { symbol decimals }
+      liquidityAdapter { address }
       adapters(first: $adapterLimit) {
         items {
           __typename
@@ -99,7 +123,6 @@ const VAULT_V2_RISK_QUERY = gql`
           assets
           assetsUsd
           type
-          factory { address }
           ... on MetaMorphoAdapter {
             metaMorpho { address name symbol }
           }
@@ -112,7 +135,7 @@ const VAULT_V2_RISK_QUERY = gql`
                 }
                 market {
                   id
-                  uniqueKey
+                  marketId
                   loanAsset { symbol decimals address }
                   collateralAsset { symbol decimals address }
                   oracleAddress
@@ -123,9 +146,15 @@ const VAULT_V2_RISK_QUERY = gql`
                     data {
                       ... on MorphoChainlinkOracleV2Data {
                         baseFeedOne { address }
+                        baseFeedTwo { address }
+                        quoteFeedOne { address }
+                        quoteFeedTwo { address }
                       }
                       ... on MorphoChainlinkOracleData {
                         baseFeedOne { address }
+                        baseFeedTwo { address }
+                        quoteFeedOne { address }
+                        quoteFeedTwo { address }
                       }
                     }
                   }
@@ -165,38 +194,49 @@ function getGradeFromScore(score: number): MarketRiskGrade {
   return 'F';
 }
 
+function normalizeAdapterMarket(
+  market: V1VaultMarketData & { marketId?: string }
+): V1VaultMarketData {
+  return {
+    ...market,
+    uniqueKey: market.uniqueKey || market.marketId || market.id,
+    marketTotalSupplyUsd:
+      market.marketTotalSupplyUsd ?? market.state?.supplyAssetsUsd ?? null,
+  };
+}
+
 async function buildMarketRisk(
-  market: V1VaultMarketData,
+  market: V1VaultMarketData & { marketId?: string },
   supplyUsd: number | null | undefined,
   supplyAssets?: string | null
 ): Promise<V2MarketRiskData> {
-  const baseFeedOneAddress = market.oracle?.data?.baseFeedOne?.address
-    ? (market.oracle.data.baseFeedOne.address as Address)
-    : null;
+  const normalizedMarket = normalizeAdapterMarket(market);
 
   const [oracleTimestampData, targetUtilization] = await Promise.all([
     getOracleTimestampData(
-      market.oracleAddress ? (market.oracleAddress as Address) : null,
-      baseFeedOneAddress
+      normalizedMarket.oracleAddress
+        ? (normalizedMarket.oracleAddress as Address)
+        : null,
+      getOracleFeedHintsFromMarket(normalizedMarket)
     ),
     getIRMTargetUtilizationWithFallback(
       market.irmAddress ? (market.irmAddress as Address) : null
     ),
   ]);
 
-  const computedScores = isMarketIdle(market)
+  const computedScores = isMarketIdle(normalizedMarket)
     ? null
     : await computeV1MarketRiskScores(
-      market,
+      normalizedMarket,
       oracleTimestampData,
       targetUtilization
     );
 
   const allocationAssets =
-    supplyAssets ?? (market as unknown as { vaultSupplyAssets?: string | null }).vaultSupplyAssets ?? null;
+    supplyAssets ?? normalizedMarket.vaultSupplyAssets ?? null;
 
   return {
-    market,
+    market: normalizedMarket,
     scores: computedScores,
     allocationUsd: supplyUsd ?? 0,
     allocationAssets,
@@ -206,9 +246,13 @@ async function buildMarketRisk(
 
 async function computeAdapterRisk(
   adapter: GraphAdapter,
-  chainId: number
+  chainId: number,
+  liquidityAdapterAddress: string | null
 ): Promise<V2AdapterRiskData | null> {
   const allocationUsd = adapter.assetsUsd ?? 0;
+  const isLiquidityAdapter =
+    liquidityAdapterAddress !== null &&
+    adapter.address.toLowerCase() === liquidityAdapterAddress.toLowerCase();
 
   if (adapter.__typename === 'MetaMorphoAdapter' && adapter.metaMorpho?.address) {
     const { markets } = await fetchV1VaultMarkets(adapter.metaMorpho.address, chainId);
@@ -217,16 +261,22 @@ async function computeAdapterRisk(
     );
 
     const { weightedScore, grade } = computeWeightedRisk(marketRisks);
+    const vaultName = adapter.metaMorpho.name ?? adapter.metaMorpho.symbol ?? 'MetaMorpho Vault';
 
     return {
       adapterAddress: adapter.address,
       adapterType: 'MetaMorphoAdapter',
-      adapterLabel: adapter.metaMorpho.name ?? adapter.metaMorpho.symbol ?? 'MetaMorpho Adapter',
+      adapterLabel: vaultName,
       allocationUsd,
       allocationAssets: adapter.assets ?? null,
       riskScore: weightedScore,
       riskGrade: grade,
-      markets: marketRisks,
+      markets: [],
+      underlyingVault: {
+        address: adapter.metaMorpho.address,
+        name: adapter.metaMorpho.name ?? null,
+        symbol: adapter.metaMorpho.symbol ?? null,
+      },
       underlyingVaultAddress: adapter.metaMorpho.address,
     };
   }
@@ -243,6 +293,7 @@ async function computeAdapterRisk(
         riskScore: 0,
         riskGrade: 'F',
         markets: [],
+        isLiquidityAdapter,
       };
     }
 
@@ -267,6 +318,7 @@ async function computeAdapterRisk(
       riskScore: weightedScore,
       riskGrade: grade,
       markets: marketRisks,
+      isLiquidityAdapter,
     };
   }
 
@@ -342,9 +394,14 @@ export async function GET(
     }
 
     const adapters = data.vault.adapters?.items?.filter((a): a is GraphAdapter => Boolean(a)) ?? [];
+    const liquidityAdapterAddress = data.vault.liquidityAdapter?.address ?? null;
 
     const adapterRisks = (
-      await Promise.all(adapters.map((adapter) => computeAdapterRisk(adapter, cfg.chainId)))
+      await Promise.all(
+        adapters.map((adapter) =>
+          computeAdapterRisk(adapter, cfg.chainId, liquidityAdapterAddress)
+        )
+      )
     ).filter((a): a is V2AdapterRiskData => a !== null);
 
     const totalAdapterAssetsUsd = adapterRisks.reduce(
@@ -367,12 +424,21 @@ export async function GET(
       ? { symbol: data.vault.asset.symbol ?? 'UNKNOWN', decimals: data.vault.asset.decimals ?? 18 }
       : null;
 
+    const idleAssetsUsd = data.vault.idleAssetsUsd ?? 0;
+    const idleAssets =
+      data.vault.idleAssets != null ? String(data.vault.idleAssets) : null;
+
     const response: V2VaultRiskResponse = {
       vaultAddress: address,
       totalAdapterAssetsUsd,
       vaultRiskScore,
       vaultRiskGrade: getGradeFromScore(vaultRiskScore),
       vaultAsset,
+      liquidityAdapterAddress,
+      idle: {
+        assetsUsd: idleAssetsUsd,
+        assets: idleAssets,
+      },
       adapters: adapterRisks,
     };
 

@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo } from 'react';
+import { Zap } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -18,7 +19,6 @@ import type { V2VaultRiskResponse } from '@/app/api/vaults/v2/[id]/risk/route';
 
 interface VaultV2AllocationsProps {
   vaultAddress: string;
-  preloadedData?: unknown; // kept for backward compat, unused
   preloadedRisk?: V2VaultRiskResponse | null;
 }
 
@@ -37,6 +37,9 @@ type AdapterRow = {
   isAdapterRow: true;
   market: string;
   isIdle: boolean;
+  isLiquidityAdapter: boolean;
+  isVaultAdapter: boolean;
+  isIdleVaultAssets: boolean;
   allocated: number;
   pct: number;
   supplyApy: number | null;
@@ -82,7 +85,8 @@ export function VaultV2Allocations({ vaultAddress, preloadedRisk }: VaultV2Alloc
 
     for (const adapter of adapterList) {
       const markets = adapter.markets ?? [];
-      const isIdleAdapter = markets.length === 0;
+      const isVaultAdapter = adapter.adapterType === 'MetaMorphoAdapter';
+      const isLiquidityAdapter = adapter.isLiquidityAdapter ?? false;
       const adapterPct = totalUsd > 0 ? ((adapter.allocationUsd ?? 0) / totalUsd) * 100 : 0;
 
       let adapterSupplyApy: number | null = null;
@@ -112,7 +116,10 @@ export function VaultV2Allocations({ vaultAddress, preloadedRisk }: VaultV2Alloc
       rows.push({
         isAdapterRow: true,
         market: adapter.adapterLabel || 'Adapter',
-        isIdle: isIdleAdapter,
+        isIdle: false,
+        isLiquidityAdapter,
+        isVaultAdapter,
+        isIdleVaultAssets: false,
         allocated: adapter.allocationUsd ?? 0,
         pct: adapterPct,
         supplyApy: adapterSupplyApy,
@@ -121,6 +128,10 @@ export function VaultV2Allocations({ vaultAddress, preloadedRisk }: VaultV2Alloc
         allocationTokenDecimals: allocDecimals,
         allocationTokenSymbol: allocSymbol,
       });
+
+      if (isVaultAdapter) {
+        continue;
+      }
 
       const sortedMarkets = markets.slice().sort((a, b) => (b.allocationUsd ?? 0) - (a.allocationUsd ?? 0));
       for (const m of sortedMarkets) {
@@ -144,6 +155,23 @@ export function VaultV2Allocations({ vaultAddress, preloadedRisk }: VaultV2Alloc
           });
       }
     }
+
+    const idleUsd = risk.idle?.assetsUsd ?? 0;
+    rows.push({
+      isAdapterRow: true,
+      market: 'Idle',
+      isIdle: true,
+      isLiquidityAdapter: false,
+      isVaultAdapter: false,
+      isIdleVaultAssets: true,
+      allocated: idleUsd,
+      pct: totalUsd > 0 ? (idleUsd / totalUsd) * 100 : 0,
+      supplyApy: null,
+      liquidity: null,
+      allocationAssets: risk.idle?.assets ?? null,
+      allocationTokenDecimals: vaultAsset?.decimals ?? 18,
+      allocationTokenSymbol: vaultAsset?.symbol ?? null,
+    });
 
     return { rows, total: totalUsd };
   }, [risk]);
@@ -222,14 +250,31 @@ export function VaultV2Allocations({ vaultAddress, preloadedRisk }: VaultV2Alloc
                       <div className="flex flex-col gap-0.5">
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="font-semibold">{r.market}</span>
-                          {r.isIdle && (
+                          {r.isVaultAdapter && (
                             <Badge variant="outline" className="text-xs">
-                              Idle
+                              Vault Adapter
+                            </Badge>
+                          )}
+                          {r.isLiquidityAdapter && (
+                            <Badge className="flex items-center gap-1 bg-emerald-600 text-white text-xs">
+                              <Zap className="h-3 w-3" />
+                              Liquidity Adapter
+                            </Badge>
+                          )}
+                          {r.isIdleVaultAssets && (
+                            <Badge variant="outline" className="text-xs">
+                              Idle Adapter
                             </Badge>
                           )}
                         </div>
                         <span className="text-muted-foreground text-xs">
-                          {r.isIdle ? 'Idle' : 'Adapter'}
+                          {r.isIdleVaultAssets
+                            ? 'Not deployed to adapters'
+                            : r.isVaultAdapter
+                              ? 'Vault adapter'
+                              : r.isLiquidityAdapter
+                                ? 'Liquidity adapter'
+                                : 'Adapter'}
                         </span>
                       </div>
                     </TableCell>
