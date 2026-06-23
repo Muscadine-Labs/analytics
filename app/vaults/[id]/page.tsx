@@ -17,7 +17,7 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { RatingBadge } from '@/components/morpho/RatingBadge';
-import { formatCompactUSD, formatPercentage } from '@/lib/format/number';
+import { formatCompactUSD, formatPercentage, formatTokenAmount } from '@/lib/format/number';
 import type { MorphoMarketMetrics } from '@/lib/morpho/types';
 import { useVaultRisk } from '@/lib/hooks/useVaultRisk';
 
@@ -104,6 +104,19 @@ export default function VaultDetailPage() {
 
   const ratingLabel = vault.riskTier ? vault.riskTier.toUpperCase() : 'N/A';
   const vaultVersion = vault.version;
+
+  const tvlSubtitle = (() => {
+    if (vault.totalAssets && vault.assetDecimals != null) {
+      try {
+        const amount = formatTokenAmount(BigInt(vault.totalAssets), vault.assetDecimals, 2);
+        const symbol = vault.asset ?? vault.symbol;
+        return symbol ? `${amount} ${symbol}` : amount;
+      } catch {
+        // ignore invalid totalAssets
+      }
+    }
+    return 'Total Value Locked';
+  })();
 
   return (
     <AppShell
@@ -192,7 +205,7 @@ export default function VaultDetailPage() {
 
           <TabsContent value="overview" className="space-y-4">
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
-              <KpiCard title="TVL" value={vault.tvl} subtitle="Total Value Locked" format="usd" />
+              <KpiCard title="TVL" value={vault.tvl} subtitle={tvlSubtitle} format="usd" />
               <KpiCard title="Base APY" value={vault.apyBase} subtitle="Base yield rate" format="percentage" />
               <KpiCard title="Boosted APY" value={vault.apyBoosted} subtitle="With boost" format="percentage" />
               <KpiCard title="Depositors" value={vault.depositors} subtitle="Total depositors" format="number" />

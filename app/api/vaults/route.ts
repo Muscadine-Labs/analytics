@@ -31,37 +31,9 @@ export async function GET(request: Request) {
   }
 
   try {
-    // Get all configured vault addresses (checksummed for GraphQL)
     const addresses = vaultAddresses.map(v => getAddress(v.address));
     const configuredAddressSet = new Set(addresses.map((a) => a.toLowerCase()));
 
-    // Build queries for both V1 and V2 vaults
-    const v1Query = gql`
-      query FetchV1Vaults($addresses: [String!]) {
-        vaults(
-          first: ${GRAPHQL_FIRST_LIMIT}
-          where: { address_in: $addresses, chainId_in: [${BASE_CHAIN_ID}] }
-        ) {
-          items {
-            address
-            name
-            symbol
-            listed
-            asset { address symbol decimals }
-            state {
-              totalAssetsUsd
-              weeklyNetApy
-              dailyNetApy
-              fee
-            }
-          }
-        }
-      }
-    `;
-
-    // For V2 vaults, we need to query individually since there's no vaultsV2 list query
-    // We'll try all addresses - non-V2 vaults will return null and be filtered out
-    // V2 vaults have positions nested directly on the vault, not in a separate query
     const v2VaultPromises = addresses.map(async (address) => {
       try {
         const v2Query = gql`
@@ -84,8 +56,6 @@ export async function GET(request: Request) {
         `;
         const result = await morphoGraphQLClient.request<{ vaultV2ByAddress?: { address: string; name: string; symbol?: string; listed?: boolean; asset?: { address?: string; symbol?: string; decimals?: number }; performanceFee?: number; totalAssetsUsd?: number; avgApy?: number; avgNetApy?: number; positions?: { items?: Array<{ user?: { address?: string } | null } | null> | null } | null } | null }>(v2Query, { address, chainId: BASE_CHAIN_ID });
         
-        // graphql-request returns data directly: { vaultV2ByAddress: { ... } }
-        // Access the property directly - it will be null if vault doesn't exist, or an object if it does
         const vaultData = result?.vaultV2ByAddress;
         
         if (vaultData && vaultData.address) {
@@ -99,8 +69,7 @@ export async function GET(request: Request) {
         }
         return null;
       } catch (error) {
-        // Silently skip non-V2 vaults - errors are expected for V1 addresses
-        logger.debug('V2 vault query failed (expected for V1 vaults)', {
+        logger.debug('V2 vault query failed', {
           address,
           error: error instanceof Error ? error.message : String(error),
         });
@@ -108,52 +77,15 @@ export async function GET(request: Request) {
       }
     });
 
-    // Fetch V1 vaults and V2 vaults in parallel
-    const [v1Data, v2Results] = await Promise.all([
-      morphoGraphQLClient.request<{ vaults?: { items?: Array<{ address: string; name: string; symbol?: string; listed?: boolean; asset?: { address?: string; symbol?: string; decimals?: number }; state?: { totalAssetsUsd?: number; weeklyNetApy?: number; dailyNetApy?: number; fee?: number } } | null> | null } | null }>(v1Query, { addresses }),
-      Promise.all(v2VaultPromises),
-    ]);
-
+    const v2Results = await Promise.all(v2VaultPromises);
     const v2Vaults = v2Results.filter((v): v is NonNullable<typeof v> => v !== null);
     logger.debug('V2 vaults fetched', {
       found: v2Vaults.length,
       queried: v2Results.length,
     });
 
-    // Fetch positions for V1 vaults (V2 vaults already have positions in their query result)
-    const positionsQuery = gql`
-      query FetchPositions($addresses: [String!]) {
-        vaultPositions(
-          first: ${GRAPHQL_FIRST_LIMIT}
-          where: { vaultAddress_in: $addresses }
-        ) {
-          items {
-            vault { address }
-            user { address }
-          }
-        }
-      }
-    `;
-
-    const positionsData = await morphoGraphQLClient.request<{ vaultPositions?: { items?: Array<{ vault?: { address?: string } | null; user?: { address?: string } | null } | null> | null } | null }>(positionsQuery, { addresses }).catch(() => ({ vaultPositions: { items: [] } }));
-
-    const v1Vaults = (v1Data.vaults?.items?.filter((v): v is NonNullable<typeof v> => v !== null) ?? []) as Array<{ address: string; name: string; symbol?: string; listed?: boolean; asset?: { address?: string; symbol?: string; decimals?: number }; state?: { totalAssetsUsd?: number; weeklyNetApy?: number; dailyNetApy?: number; fee?: number } | null }>;
-    const v1Positions = (positionsData.vaultPositions?.items?.filter((p): p is NonNullable<typeof p> => p !== null) ?? []) as Array<{ vault?: { address?: string } | null; user?: { address?: string } | null }>;
-
-    // Compute depositors per vault (unique users per vault address)
     const depositorsByVault: Record<string, Set<string>> = {};
-    
-    // Count unique users for V1 vaults
-    for (const pos of v1Positions) {
-      if (!pos || !pos.vault?.address || !pos.user?.address) continue;
-      const addr = pos.vault.address.toLowerCase();
-      if (!depositorsByVault[addr]) {
-        depositorsByVault[addr] = new Set<string>();
-      }
-      depositorsByVault[addr].add(pos.user.address.toLowerCase());
-    }
 
-    // Count unique users for V2 vaults from nested positions
     for (const v2Vault of v2Vaults) {
       if (!v2Vault.address) continue;
       const addr = v2Vault.address.toLowerCase();
@@ -168,7 +100,6 @@ export async function GET(request: Request) {
       }
     }
     
-    // Convert Sets to counts
     const depositorCounts: Record<string, number> = {};
     for (const [addr, users] of Object.entries(depositorsByVault)) {
       depositorCounts[addr] = users.size;
@@ -181,58 +112,29 @@ export async function GET(request: Request) {
     const getChainId = (addr: string) =>
       addressToChainId[addr.toLowerCase()] ?? BASE_CHAIN_ID;
 
-    // Combine and format vaults from GraphQL
-    const allVaults = [
-      ...v1Vaults.map((v) => {
-        const chainId = getChainId(v.address);
-        return {
-          id: v.address,
-          address: v.address,
-          name: v.name ?? 'Unknown Vault',
-          symbol: v.symbol ?? v.asset?.symbol ?? 'UNKNOWN',
-          asset: v.asset?.symbol ?? 'UNKNOWN',
-          chainId,
-          scanUrl: `${getScanUrlForChain(chainId)}/address/${v.address}`,
-        performanceFeeBps: v.state?.fee ? Math.round(v.state.fee * BPS_PER_ONE) : null,
+    const merged = v2Vaults.map((v) => {
+      const chainId = getChainId(v.address);
+      return {
+        id: v.address,
+        address: v.address,
+        name: v.name ?? 'Unknown Vault',
+        symbol: v.symbol ?? v.asset?.symbol ?? 'UNKNOWN',
+        asset: v.asset?.symbol ?? 'UNKNOWN',
+        chainId,
+        scanUrl: `${getScanUrlForChain(chainId)}/address/${v.address}`,
+        performanceFeeBps: v.performanceFee ? Math.round(v.performanceFee * BPS_PER_ONE) : null,
         status: v.listed ? 'active' as const : 'paused' as const,
         riskTier: 'medium' as const,
         createdAt: new Date().toISOString(),
-        tvl: v.state?.totalAssetsUsd ?? null,
-        apy: v.state?.weeklyNetApy != null ? v.state.weeklyNetApy * 100 :
-             v.state?.dailyNetApy != null ? v.state.dailyNetApy * 100 : null,
+        tvl: v.totalAssetsUsd ?? null,
+        apy: v.avgNetApy != null ? v.avgNetApy * 100 : 
+             v.avgApy != null ? v.avgApy * 100 : null,
         depositors: depositorCounts[v.address.toLowerCase()] ?? 0,
         revenueAllTime: null,
         feesAllTime: null,
         lastHarvest: null,
-        };
-      }),
-      ...v2Vaults.map((v) => {
-        const chainId = getChainId(v.address);
-        return {
-          id: v.address,
-          address: v.address,
-          name: v.name ?? 'Unknown Vault',
-          symbol: v.symbol ?? v.asset?.symbol ?? 'UNKNOWN',
-          asset: v.asset?.symbol ?? 'UNKNOWN',
-          chainId,
-          scanUrl: `${getScanUrlForChain(chainId)}/address/${v.address}`,
-          performanceFeeBps: v.performanceFee ? Math.round(v.performanceFee * BPS_PER_ONE) : null,
-          status: v.listed ? 'active' as const : 'paused' as const,
-          riskTier: 'medium' as const,
-          createdAt: new Date().toISOString(),
-          tvl: v.totalAssetsUsd ?? null,
-          apy: v.avgNetApy != null ? v.avgNetApy * 100 : 
-               v.avgApy != null ? v.avgApy * 100 : null,
-          depositors: depositorCounts[v.address.toLowerCase()] ?? 0,
-          revenueAllTime: null,
-          feesAllTime: null,
-          lastHarvest: null,
-        };
-      }),
-    ];
-
-    // Filter to only include vaults from our configured addresses
-    const merged = allVaults.filter(v => configuredAddressSet.has(v.address.toLowerCase()));
+      };
+    }).filter(v => configuredAddressSet.has(v.address.toLowerCase()));
 
     const responseHeaders = new Headers(rateLimitResult.headers);
     responseHeaders.set('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=300');
@@ -243,5 +145,3 @@ export async function GET(request: Request) {
     return NextResponse.json(error, { status: statusCode });
   }
 }
-
-

@@ -1,11 +1,16 @@
+import { BASE_CHAIN_ID } from '@/lib/constants';
+
 // Simplified vault config - only stores addresses
 // All other data (name, symbol, asset, performance fee, etc.) is fetched from GraphQL
+export type MorphoVersion = 'v2';
+export type VaultListCategory = 'prime' | 'vineyard' | 'frontier';
+
 export interface VaultAddressConfig {
   address: string;
   chainId: number;
+  morphoVersion: MorphoVersion;
+  listCategory: VaultListCategory;
 }
-
-import { BASE_CHAIN_ID } from '@/lib/constants';
 
 // Vault addresses only - all other data fetched from GraphQL
 export const vaultAddresses: VaultAddressConfig[] = [
@@ -13,27 +18,27 @@ export const vaultAddresses: VaultAddressConfig[] = [
   {
     address: process.env.NEXT_PUBLIC_VAULT_USDC_V2 || '0x89712980Cb434eF5aE4AB29349419eb976B0b496',
     chainId: BASE_CHAIN_ID,
+    morphoVersion: 'v2',
+    listCategory: 'prime',
   },
   {
     address: process.env.NEXT_PUBLIC_VAULT_WETH_V2 || '0xd6dcad2f7da91fbb27bda471540d9770c97a5a43',
     chainId: BASE_CHAIN_ID,
+    morphoVersion: 'v2',
+    listCategory: 'prime',
   },
   {
     address: process.env.NEXT_PUBLIC_VAULT_CBBTC_V2 || '0x99dcd0d75822ba398f13b2a8852b07c7e137ec70',
     chainId: BASE_CHAIN_ID,
+    morphoVersion: 'v2',
+    listCategory: 'prime',
   },
-  // V1 Vaults
+  // V2 Frontier Vaults
   {
-    address: process.env.NEXT_PUBLIC_VAULT_USDC || '0xf7e26Fa48A568b8b0038e104DfD8ABdf0f99074F',
+    address: process.env.NEXT_PUBLIC_VAULT_USDC_FRONTIER_V2 || '0x314fD07319ef645bA7D548915CCd91F4788A1839',
     chainId: BASE_CHAIN_ID,
-  },
-  {
-    address: process.env.NEXT_PUBLIC_VAULT_CBBTC || '0xAeCc8113a7bD0CFAF7000EA7A31afFD4691ff3E9',
-    chainId: BASE_CHAIN_ID,
-  },
-  {
-    address: process.env.NEXT_PUBLIC_VAULT_WETH || '0x21e0d366272798da3A977FEBA699FCB91959d120',
-    chainId: BASE_CHAIN_ID,
+    morphoVersion: 'v2',
+    listCategory: 'frontier',
   },
 ];
 
@@ -46,25 +51,44 @@ export const getAllVaultAddresses = (): VaultAddressConfig[] => {
   return vaultAddresses;
 };
 
-// Categorize vaults by name pattern (works with GraphQL data)
-export type VaultCategory = 'prime' | 'vineyard' | 'v1';
+/** @deprecated Use VaultListCategory */
+export type VaultCategory = VaultListCategory;
 
-export const getVaultCategory = (vaultName: string | null | undefined): VaultCategory => {
+export const getVaultListCategory = (
+  address: string,
+  vaultName?: string | null
+): VaultListCategory => {
+  const configured = getVaultByAddress(address);
+  if (configured?.listCategory) {
+    return configured.listCategory;
+  }
+
   if (!vaultName) {
-    return 'v1'; // Default to v1 if name is missing
+    return 'prime';
   }
   const name = vaultName.toLowerCase();
-  if (name.includes('prime')) {
-    return 'prime';
+  if (name.includes('frontier')) {
+    return 'frontier';
   }
   if (name.includes('vineyard')) {
     return 'vineyard';
   }
-  return 'v1';
+  return 'prime';
 };
 
-// Determine if vault should use v2 GraphQL query (Prime and Vineyard are both v2)
-export const shouldUseV2Query = (vaultName: string | null | undefined): boolean => {
-  const category = getVaultCategory(vaultName);
-  return category === 'prime' || category === 'vineyard';
+/** @deprecated Use getVaultListCategory with address */
+export const getVaultCategory = (vaultName: string | null | undefined): VaultListCategory => {
+  if (!vaultName) {
+    return 'prime';
+  }
+  const name = vaultName.toLowerCase();
+  if (name.includes('frontier')) {
+    return 'frontier';
+  }
+  if (name.includes('vineyard')) {
+    return 'vineyard';
+  }
+  return 'prime';
 };
+
+export const shouldUseV2Query = (_vaultName?: string | null): boolean => true;

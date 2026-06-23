@@ -7,10 +7,10 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
-import Link from 'next/link';
 import { formatCompactUSD, formatPercentage } from '@/lib/format/number';
 import type { MarketRiskGrade } from '@/lib/morpho/compute-v1-market-risk';
 import { getGradeColor, getScoreColor } from '@/lib/morpho/market-risk-display';
+import { shouldShowMarketEntry, shouldShowAdapterEntry } from '@/lib/morpho/format-risk';
 import { MarketRiskCard } from '@/components/morpho/MarketRiskCard';
 
 interface VaultRiskV2Props {
@@ -29,8 +29,29 @@ export function VaultRiskV2({ vaultAddress, preloadedData }: VaultRiskV2Props) {
 
   const sortedAdapters = useMemo(() => {
     if (!data?.adapters) return [];
-    return [...data.adapters].sort((a, b) => (b.allocationUsd ?? 0) - (a.allocationUsd ?? 0));
+    return [...data.adapters]
+      .filter((a) => a.adapterType !== 'MetaMorphoAdapter')
+      .filter((a) => {
+        const hasVisibleMarkets = (a.markets ?? []).some((m) =>
+          shouldShowMarketEntry(
+            m.allocationUsd,
+            m.allocationAssets,
+            m.absoluteCap,
+            m.relativeCap
+          )
+        );
+        return shouldShowAdapterEntry(
+          a.allocationUsd,
+          a.allocationAssets,
+          a.absoluteCap,
+          a.relativeCap,
+          hasVisibleMarkets
+        );
+      })
+      .sort((a, b) => (b.allocationUsd ?? 0) - (a.allocationUsd ?? 0));
   }, [data?.adapters]);
+
+  const idleUsd = data?.idle?.assetsUsd ?? 0;
 
   if (isActuallyLoading) {
     return (
@@ -94,7 +115,7 @@ export function VaultRiskV2({ vaultAddress, preloadedData }: VaultRiskV2Props) {
     );
   }
 
-  if (!data || sortedAdapters.length === 0) {
+  if (!data || (sortedAdapters.length === 0 && idleUsd <= 0)) {
     return (
       <Card>
         <CardHeader>
@@ -121,7 +142,7 @@ export function VaultRiskV2({ vaultAddress, preloadedData }: VaultRiskV2Props) {
             Risk Management
           </CardTitle>
           <p className="text-sm text-slate-500 dark:text-slate-400">
-            Weighted average across adapters (vault adapters roll up underlying V1 vault risk)
+            Weighted average across adapters, including underlying markets for vault adapters
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -157,9 +178,16 @@ export function VaultRiskV2({ vaultAddress, preloadedData }: VaultRiskV2Props) {
             const adapterWeightPct =
               totalAdapterAssets > 0 ? (adapter.allocationUsd / totalAdapterAssets) * 100 : 0;
             const isVaultAdapter = adapter.adapterType === 'MetaMorphoAdapter';
-            const markets = [...adapter.markets].sort(
-              (a, b) => (b.allocationUsd ?? 0) - (a.allocationUsd ?? 0)
-            );
+            const markets = [...adapter.markets]
+              .filter((m) =>
+                shouldShowMarketEntry(
+                  m.allocationUsd,
+                  m.allocationAssets,
+                  m.absoluteCap,
+                  m.relativeCap
+                )
+              )
+              .sort((a, b) => (b.allocationUsd ?? 0) - (a.allocationUsd ?? 0));
 
             return (
               <div key={adapter.adapterAddress} className="space-y-4">
@@ -167,16 +195,7 @@ export function VaultRiskV2({ vaultAddress, preloadedData }: VaultRiskV2Props) {
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                     <div className="space-y-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        {isVaultAdapter && adapter.underlyingVault?.address ? (
-                          <Link
-                            href={`/vault/v1/${adapter.underlyingVault.address}`}
-                            className="text-base font-semibold text-blue-600 hover:underline dark:text-blue-400"
-                          >
-                            {adapter.adapterLabel}
-                          </Link>
-                        ) : (
-                          <p className="text-base font-semibold">{adapter.adapterLabel}</p>
-                        )}
+                        <p className="text-base font-semibold">{adapter.adapterLabel}</p>
                         <Badge variant="outline" className="text-xs">
                           {isVaultAdapter ? 'Vault Adapter' : 'Market Adapter'}
                         </Badge>
@@ -208,21 +227,9 @@ export function VaultRiskV2({ vaultAddress, preloadedData }: VaultRiskV2Props) {
                     </div>
                   </div>
 
-                  {isVaultAdapter && adapter.underlyingVault?.address && (
-                    <p className="text-xs text-slate-500 dark:text-slate-400">
-                      Market-level risk is on the{' '}
-                      <Link
-                        href={`/vault/v1/${adapter.underlyingVault.address}`}
-                        className="text-blue-600 hover:underline dark:text-blue-400"
-                      >
-                        underlying V1 vault page
-                      </Link>
-                      .
-                    </p>
-                  )}
                 </div>
 
-                {!isVaultAdapter && markets.length > 0 && (
+                {markets.length > 0 && (
                   <div className="space-y-6 pl-0 sm:pl-2">
                     {markets.map((m) => (
                       <MarketRiskCard
@@ -240,6 +247,7 @@ export function VaultRiskV2({ vaultAddress, preloadedData }: VaultRiskV2Props) {
             );
           })}
 
+          {idleUsd > 0 && (
           <div className="rounded-lg border border-dashed p-4 bg-slate-50/60 dark:bg-slate-900/50 space-y-1">
             <div className="flex flex-wrap items-center gap-2">
               <p className="text-base font-semibold">Idle</p>
@@ -248,10 +256,11 @@ export function VaultRiskV2({ vaultAddress, preloadedData }: VaultRiskV2Props) {
               </Badge>
             </div>
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              Allocation: {formatCompactUSD(data.idle?.assetsUsd ?? 0)} · assets not deployed to
+              Allocation: {formatCompactUSD(idleUsd)} · assets not deployed to
               adapters
             </p>
           </div>
+          )}
         </div>
       </CardContent>
     </Card>

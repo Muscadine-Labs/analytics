@@ -36,6 +36,8 @@ export interface VaultWithData {
   description?: string;
   version?: 'v1' | 'v2';
   tvl: number | null;
+  /** Raw asset amount in smallest units (from Morpho totalAssets). */
+  totalAssets?: string | null;
   apy: number | null;
   depositors: number;
   revenueAllTime: number | null;

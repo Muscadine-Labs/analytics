@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/table';
 import { useVaultV2Risk } from '@/lib/hooks/useVaultV2Risk';
 import { formatCompactUSD, formatPercentage, formatLtv, formatTokenAmount } from '@/lib/format/number';
+import { shouldShowMarketEntry } from '@/lib/morpho/format-risk';
 import type { V2VaultRiskResponse } from '@/app/api/vaults/v2/[id]/risk/route';
 
 interface VaultV2AllocationsProps {
@@ -50,6 +51,7 @@ type AdapterRow = {
 };
 type MarketRow = {
   isAdapterRow?: false;
+  rowKey: string;
   market: string;
   lltv: string | number | null;
   allocationAssets: string | null;
@@ -61,11 +63,71 @@ type MarketRow = {
   supplyApy: number | null;
   allocated: number;
   pct: number;
+  isLiquidityMarket?: boolean;
 };
 type TableRow = AdapterRow | MarketRow;
 
 function isAdapterRow(r: TableRow): r is AdapterRow {
   return 'isAdapterRow' in r && r.isAdapterRow === true;
+}
+
+function marketIdKey(
+  market: { uniqueKey?: string | null; marketId?: string | null; id?: string | null } | null | undefined
+): string | null {
+  if (!market) return null;
+  const key = market.uniqueKey ?? market.marketId ?? market.id;
+  return key ? key.toLowerCase() : null;
+}
+
+function pushMarketRows(
+  rows: TableRow[],
+  markets: NonNullable<V2VaultRiskResponse['adapters']>[number]['markets'],
+  totalUsd: number,
+  adapterLabel: string,
+  liquidityMarketId: string | null
+): void {
+  const sortedMarkets = (markets ?? [])
+    .slice()
+    .sort((a, b) => (b.allocationUsd ?? 0) - (a.allocationUsd ?? 0));
+
+  for (const m of sortedMarkets) {
+    if (
+      !shouldShowMarketEntry(
+        m.allocationUsd,
+        m.allocationAssets,
+        m.absoluteCap,
+        m.relativeCap
+      )
+    ) {
+      continue;
+    }
+
+    const col = m.market?.collateralAsset?.symbol;
+    const loan = m.market?.loanAsset?.symbol;
+    const marketLabel =
+      col && loan ? `${col}/${loan}` : loan || col || adapterLabel || 'Market';
+    const rowMarketId = marketIdKey(m.market);
+    const isLiquidityMarket =
+      liquidityMarketId != null &&
+      rowMarketId != null &&
+      rowMarketId === liquidityMarketId;
+
+    rows.push({
+      rowKey: rowMarketId ?? `${marketLabel}-${rows.length}`,
+      market: marketLabel,
+      lltv: m.market?.lltv ?? null,
+      allocationAssets: m.allocationAssets ?? null,
+      allocationTokenDecimals: m.market?.loanAsset?.decimals ?? 18,
+      allocationTokenSymbol: m.market?.loanAsset?.symbol ?? null,
+      utilization: m.market?.state?.utilization ?? null,
+      liquidity: m.market?.state?.liquidityAssetsUsd ?? null,
+      borrowApy: m.market?.state?.borrowApy ?? null,
+      supplyApy: m.market?.state?.supplyApy ?? null,
+      allocated: m.allocationUsd ?? 0,
+      pct: totalUsd > 0 ? ((m.allocationUsd ?? 0) / totalUsd) * 100 : 0,
+      isLiquidityMarket,
+    });
+  }
 }
 
 export function VaultV2Allocations({ vaultAddress, preloadedRisk }: VaultV2AllocationsProps) {
@@ -77,103 +139,42 @@ export function VaultV2Allocations({ vaultAddress, preloadedRisk }: VaultV2Alloc
 
     const totalUsd = risk.totalAdapterAssetsUsd ?? 0;
     const vaultAsset = risk.vaultAsset ?? null;
+    const liquidityMarketId = risk.liquidityMarket?.marketId?.toLowerCase() ?? null;
     const adapterList = (risk.adapters ?? [])
+      .filter((a) => a.adapterType !== 'MetaMorphoAdapter')
       .slice()
       .sort((a, b) => (b.allocationUsd ?? 0) - (a.allocationUsd ?? 0));
 
     const rows: TableRow[] = [];
 
     for (const adapter of adapterList) {
-      const markets = adapter.markets ?? [];
-      const isVaultAdapter = adapter.adapterType === 'MetaMorphoAdapter';
-      const isLiquidityAdapter = adapter.isLiquidityAdapter ?? false;
-      const adapterPct = totalUsd > 0 ? ((adapter.allocationUsd ?? 0) / totalUsd) * 100 : 0;
-
-      let adapterSupplyApy: number | null = null;
-      let adapterLiquidity: number | null = null;
-      if (markets.length > 0) {
-        const totalAlloc = markets.reduce((s, m) => s + (m.allocationUsd ?? 0), 0);
-        if (totalAlloc > 0) {
-          adapterSupplyApy =
-            markets.reduce(
-              (s, m) =>
-                s +
-                ((m.market?.state?.supplyApy ?? 0) * (m.allocationUsd ?? 0)),
-              0
-            ) / totalAlloc;
-        }
-        const sumLiq = markets.reduce(
-          (s, m) => s + (m.market?.state?.liquidityAssetsUsd ?? 0),
-          0
-        );
-        if (Number.isFinite(sumLiq)) adapterLiquidity = sumLiq;
-      } else if (isVaultAdapter && adapter.apy != null) {
-        adapterSupplyApy = adapter.apy;
-      }
-
-      const allocAssets = adapter.allocationAssets ?? null;
-      const allocDecimals = markets[0]?.market?.loanAsset?.decimals ?? vaultAsset?.decimals ?? 18;
-      const allocSymbol = markets[0]?.market?.loanAsset?.symbol ?? vaultAsset?.symbol ?? null;
-
-      rows.push({
-        isAdapterRow: true,
-        market: adapter.adapterLabel || 'Adapter',
-        isIdle: false,
-        isLiquidityAdapter,
-        isVaultAdapter,
-        isIdleVaultAssets: false,
-        allocated: adapter.allocationUsd ?? 0,
-        pct: adapterPct,
-        supplyApy: adapterSupplyApy,
-        liquidity: adapterLiquidity,
-        allocationAssets: allocAssets,
-        allocationTokenDecimals: allocDecimals,
-        allocationTokenSymbol: allocSymbol,
-      });
-
-      if (isVaultAdapter) {
-        continue;
-      }
-
-      const sortedMarkets = markets.slice().sort((a, b) => (b.allocationUsd ?? 0) - (a.allocationUsd ?? 0));
-      for (const m of sortedMarkets) {
-          const col = m.market?.collateralAsset?.symbol;
-          const loan = m.market?.loanAsset?.symbol;
-          const marketLabel =
-            col && loan ? `${col}/${loan}` : loan || col || adapter.adapterLabel || 'Market';
-
-          rows.push({
-            market: marketLabel,
-            lltv: m.market?.lltv ?? null,
-            allocationAssets: m.allocationAssets ?? null,
-            allocationTokenDecimals: m.market?.loanAsset?.decimals ?? 18,
-            allocationTokenSymbol: m.market?.loanAsset?.symbol ?? null,
-            utilization: m.market?.state?.utilization ?? null,
-            liquidity: m.market?.state?.liquidityAssetsUsd ?? null,
-            borrowApy: m.market?.state?.borrowApy ?? null,
-            supplyApy: m.market?.state?.supplyApy ?? null,
-            allocated: m.allocationUsd ?? 0,
-            pct: totalUsd > 0 ? ((m.allocationUsd ?? 0) / totalUsd) * 100 : 0,
-          });
-      }
+      pushMarketRows(
+        rows,
+        adapter.markets ?? [],
+        totalUsd,
+        adapter.adapterLabel,
+        liquidityMarketId
+      );
     }
 
     const idleUsd = risk.idle?.assetsUsd ?? 0;
-    rows.push({
-      isAdapterRow: true,
-      market: 'Idle',
-      isIdle: true,
-      isLiquidityAdapter: false,
-      isVaultAdapter: false,
-      isIdleVaultAssets: true,
-      allocated: idleUsd,
-      pct: totalUsd > 0 ? (idleUsd / totalUsd) * 100 : 0,
-      supplyApy: null,
-      liquidity: null,
-      allocationAssets: risk.idle?.assets ?? null,
-      allocationTokenDecimals: vaultAsset?.decimals ?? 18,
-      allocationTokenSymbol: vaultAsset?.symbol ?? null,
-    });
+    if (idleUsd > 0) {
+      rows.push({
+        isAdapterRow: true,
+        market: 'Idle',
+        isIdle: true,
+        isLiquidityAdapter: false,
+        isVaultAdapter: false,
+        isIdleVaultAssets: true,
+        allocated: idleUsd,
+        pct: totalUsd > 0 ? (idleUsd / totalUsd) * 100 : 0,
+        supplyApy: null,
+        liquidity: null,
+        allocationAssets: risk.idle?.assets ?? null,
+        allocationTokenDecimals: vaultAsset?.decimals ?? 18,
+        allocationTokenSymbol: vaultAsset?.symbol ?? null,
+      });
+    }
 
     return { rows, total: totalUsd };
   }, [risk]);
@@ -305,12 +306,18 @@ export function VaultV2Allocations({ vaultAddress, preloadedRisk }: VaultV2Alloc
                     <TableCell className="text-right">{`${r.pct.toFixed(2)}%`}</TableCell>
                   </TableRow>
                 ) : (
-                  <TableRow key={`${r.market}-${i}`}>
+                  <TableRow key={r.rowKey}>
                     <TableCell className="pl-8">
                       <div className="flex flex-col gap-0.5">
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="font-medium">{r.market}</span>
-                          {formatLtv(r.lltv) === '—' && (
+                          {r.isLiquidityMarket && (
+                            <Badge className="flex items-center gap-1 bg-emerald-600 text-white text-xs">
+                              <Zap className="h-3 w-3" />
+                              Liquidity
+                            </Badge>
+                          )}
+                          {!r.isLiquidityMarket && formatLtv(r.lltv) === '—' && (
                             <Badge variant="outline" className="text-xs">
                               Idle
                             </Badge>

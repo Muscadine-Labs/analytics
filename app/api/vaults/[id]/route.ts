@@ -396,6 +396,7 @@ export async function GET(
         yield?: { apr?: number | null } | null;
       } | null;
       // V2 vault fields (direct on vault)
+      totalAssets?: string | number | null;
       totalAssetsUsd?: number | null;
       performanceFee?: number | null;
       managementFee?: number | null;
@@ -512,6 +513,10 @@ export async function GET(
     const tvlUsd = isV2 
       ? (mv?.totalAssetsUsd ?? null)
       : (mv?.state?.totalAssetsUsd ?? null);
+
+    const totalAssetsRaw = isV2
+      ? (mv?.totalAssets != null ? String(mv.totalAssets) : null)
+      : (mv?.state?.totalAssets != null ? String(mv.state.totalAssets) : null);
     
     // Calculate APY - preserve null if all values are null/undefined
     const apyPct = isV2
@@ -554,6 +559,7 @@ export async function GET(
       asset: mv?.asset?.symbol ?? 'UNKNOWN',
       assetDecimals: mv?.asset?.decimals ?? null,
       tvl: tvlUsd,
+      totalAssets: totalAssetsRaw,
       apy: apyPct,
       apyBase: apyBasePct,
       apyBoosted: apyBoostedPct,

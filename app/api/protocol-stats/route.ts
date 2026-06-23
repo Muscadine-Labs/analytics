@@ -93,7 +93,37 @@ export async function GET(request: Request) {
     );
 
     const morphoVaults = data.vaults?.items?.filter((v): v is Vault => v !== null) ?? [];
-    const positions = data.vaultPositions?.items?.filter((p): p is VaultPosition => p !== null) ?? [];
+    const v1Positions = data.vaultPositions?.items?.filter((p): p is VaultPosition => p !== null) ?? [];
+
+    const v2PositionResults = await Promise.all(
+      addresses.map(async (address) => {
+        try {
+          const v2PositionsQuery = gql`
+            query FetchV2VaultPositions($address: String!, $chainId: Int!) {
+              vaultV2ByAddress(address: $address, chainId: $chainId) {
+                positions(first: ${GRAPHQL_FIRST_LIMIT}) {
+                  items { user { address } }
+                }
+              }
+            }
+          `;
+          const result = await morphoGraphQLClient.request<{
+            vaultV2ByAddress?: {
+              positions?: {
+                items?: Array<{ user?: { address?: string } | null } | null> | null;
+              } | null;
+            } | null;
+          }>(v2PositionsQuery, { address, chainId: BASE_CHAIN_ID });
+          return result.vaultV2ByAddress?.positions?.items?.filter(Boolean) ?? [];
+        } catch (error) {
+          logger.debug('Failed to fetch V2 vault positions for protocol stats', {
+            address,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          return [];
+        }
+      })
+    );
 
     // Calculate totalDeposited from V1 vaults (from main query)
     let totalDeposited = morphoVaults.reduce((sum, v) => sum + (v.state?.totalAssetsUsd ?? 0), 0);
@@ -515,12 +545,20 @@ export async function GET(request: Request) {
     let totalFeesGenerated = 0;
     let totalInterestGenerated = 0;
 
-    // Unique depositors across our vaults
+    // Unique depositors across our vaults (deduplicated by wallet address)
     const uniqueUsers = new Set<string>();
-    for (const p of positions) {
+    for (const p of v1Positions) {
       const userAddress = p.user?.address?.toLowerCase();
       if (userAddress) {
         uniqueUsers.add(userAddress);
+      }
+    }
+    for (const items of v2PositionResults) {
+      for (const pos of items) {
+        const userAddress = pos?.user?.address?.toLowerCase();
+        if (userAddress) {
+          uniqueUsers.add(userAddress);
+        }
       }
     }
 

@@ -92,16 +92,19 @@ export function formatLtv(lltv: number | string | null | undefined): string {
 
 // Format token amount with decimals
 export const formatTokenAmount = (
-  amount: bigint | number | null,
+  amount: bigint | number | null | undefined,
   decimals: number,
   displayDecimals: number = 2
 ): string => {
-  if (!amount || !decimals) return '0.00';
-  
+  if (amount === null || amount === undefined || !Number.isFinite(decimals) || decimals <= 0) {
+    return '0.00';
+  }
+  if (amount === 0n || amount === 0) return '0.00';
+
   const numAmount = typeof amount === 'bigint' ? Number(amount) : amount;
   const divisor = Math.pow(10, decimals);
   const formatted = numAmount / divisor;
-  
+
   return new Intl.NumberFormat('en-US', {
     minimumFractionDigits: displayDecimals,
     maximumFractionDigits: displayDecimals,

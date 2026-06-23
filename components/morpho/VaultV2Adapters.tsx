@@ -1,7 +1,6 @@
 'use client';
 
 import { useMemo } from 'react';
-import Link from 'next/link';
 import { Zap, Wallet } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -82,7 +81,6 @@ export function VaultV2Adapters({ vaultAddress, preloadedData }: VaultV2Adapters
             const isLiquidity = adapter.address.toLowerCase() === liquidityAdapterAddress;
             const isVaultAdapter =
               adapter.type === 'MetaMorpho' || Boolean(adapter.metaMorpho?.address);
-            const v1Address = adapter.metaMorpho?.address;
 
             const title = isVaultAdapter
               ? adapter.metaMorpho?.name ?? adapter.metaMorpho?.symbol ?? 'Vault Adapter'
@@ -96,18 +94,9 @@ export function VaultV2Adapters({ vaultAddress, preloadedData }: VaultV2Adapters
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                   <div className="space-y-1">
                     <div className="flex flex-wrap items-center gap-2">
-                      {isVaultAdapter && v1Address ? (
-                        <Link
-                          href={`/vault/v1/${v1Address}`}
-                          className="text-base font-semibold text-blue-600 hover:underline dark:text-blue-400"
-                        >
-                          {title}
-                        </Link>
-                      ) : (
-                        <p className="text-base font-semibold text-slate-900 dark:text-slate-100">
-                          {title}
-                        </p>
-                      )}
+                      <p className="text-base font-semibold text-slate-900 dark:text-slate-100">
+                        {title}
+                      </p>
                       <Badge variant="outline" className="text-xs">
                         {isVaultAdapter ? 'Vault Adapter' : 'Market Adapter'}
                       </Badge>

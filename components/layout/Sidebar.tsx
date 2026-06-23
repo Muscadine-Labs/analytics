@@ -4,7 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { Shield, X, ChevronDown, ChevronRight } from 'lucide-react';
-import { getVaultCategory, shouldUseV2Query } from '@/lib/config/vaults';
+import { getVaultListCategory, type VaultListCategory } from '@/lib/config/vaults';
 import { useVaultList } from '@/lib/hooks/useProtocolStats';
 import { Button } from '@/components/ui/button';
 import { SIDEBAR_NETWORKS } from '@/lib/constants';
@@ -14,18 +14,22 @@ const navBase = [
   { label: 'Overview', href: '/', icon: Shield },
 ];
 
-type VaultSection = { type: 'vineyard' | 'prime' | 'v1'; label: string; vaults: VaultWithData[] };
+type VaultSection = { type: VaultListCategory; label: string; vaults: VaultWithData[] };
+
+const SECTION_ORDER: VaultListCategory[] = ['vineyard', 'prime', 'frontier'];
+const SECTION_LABELS: Record<VaultListCategory, string> = {
+  vineyard: 'V2 Vineyard Vaults',
+  prime: 'V2 Prime Vaults',
+  frontier: 'V2 Frontier Vaults',
+};
 
 function getSectionsForNetwork(vaults: VaultWithData[], chainId: number): VaultSection[] {
   const byChain = vaults.filter((v) => v.chainId === chainId);
-  const sections: VaultSection[] = [];
-  const prime = byChain.filter((v) => getVaultCategory(v.name) === 'prime');
-  const vineyard = byChain.filter((v) => getVaultCategory(v.name) === 'vineyard');
-  const v1 = byChain.filter((v) => getVaultCategory(v.name) === 'v1');
-  if (vineyard.length > 0) sections.push({ type: 'vineyard', label: 'V2 Vineyard Vaults', vaults: vineyard });
-  if (prime.length > 0) sections.push({ type: 'prime', label: 'V2 Prime Vaults', vaults: prime });
-  if (v1.length > 0) sections.push({ type: 'v1', label: 'V1 Vaults', vaults: v1 });
-  return sections;
+  return SECTION_ORDER.map((type) => ({
+    type,
+    label: SECTION_LABELS[type],
+    vaults: byChain.filter((v) => getVaultListCategory(v.address, v.name) === type),
+  })).filter((section) => section.vaults.length > 0);
 }
 
 type SidebarProps = {
@@ -138,16 +142,8 @@ export function Sidebar({ onClose }: SidebarProps) {
                         </p>
                         <div className="space-y-1">
                           {section.vaults.map((vault) => {
-                            const useV2Route =
-                              section.type !== 'v1' && shouldUseV2Query(vault.name);
-                            const href =
-                              section.type === 'v1'
-                                ? `/vault/v1/${vault.address}`
-                                : `/vault/${useV2Route ? 'v2' : 'v1'}/${vault.address}`;
-                            const active =
-                              section.type === 'v1'
-                                ? isActive(`/vault/v1/${vault.address}`)
-                                : isActive(`/vault/${useV2Route ? 'v2' : 'v1'}/${vault.address}`);
+                            const href = `/vault/v2/${vault.address}`;
+                            const active = isActive(href);
 
                             return (
                               <Link
@@ -160,13 +156,7 @@ export function Sidebar({ onClose }: SidebarProps) {
                                     : ''
                                 }`}
                               >
-                                <span
-                                  className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${
-                                    section.type === 'v1'
-                                      ? 'bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-200'
-                                      : 'bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300'
-                                  }`}
-                                >
+                                <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-blue-100 text-xs font-semibold text-blue-700 dark:bg-blue-900/50 dark:text-blue-300">
                                   {(vault.asset ?? 'U').slice(0, 1)}
                                 </span>
                                 <span className="truncate min-w-0">{vault.name ?? 'Unknown Vault'}</span>

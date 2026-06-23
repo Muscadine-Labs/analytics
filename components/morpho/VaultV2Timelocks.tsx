@@ -83,9 +83,16 @@ export function VaultV2Timelocks({ vaultAddress, preloadedData }: VaultV2Timeloc
             >
               <div>
                 <p className="text-xs uppercase text-slate-500 dark:text-slate-400">Function</p>
-                <p className="font-semibold text-slate-900 dark:text-slate-100">
-                  {t.functionName}
-                </p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="font-semibold text-slate-900 dark:text-slate-100">
+                    {t.functionName}
+                  </p>
+                  {t.abdicated && (
+                    <Badge variant="outline" className="text-xs">
+                      Abdicated
+                    </Badge>
+                  )}
+                </div>
               </div>
               <div>
                 <p className="text-xs uppercase text-slate-500 dark:text-slate-400">Selector</p>
@@ -96,19 +103,19 @@ export function VaultV2Timelocks({ vaultAddress, preloadedData }: VaultV2Timeloc
               <div>
                 <p className="text-xs uppercase text-slate-500 dark:text-slate-400">Duration</p>
                 <p className="font-semibold text-slate-900 dark:text-slate-100">
-                  {formatDuration(t.durationSeconds)}
+                  {t.abdicated ? 'Locked' : formatDuration(t.durationSeconds)}
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
-                {t.durationSeconds === 0 ? (
+                {!t.abdicated && t.durationSeconds === 0 ? (
                   <Badge variant="destructive" className="text-xs">
                     No delay
                   </Badge>
-                ) : (
+                ) : !t.abdicated ? (
                   <Badge variant="outline" className="text-xs">
                     {t.durationSeconds}s total
                   </Badge>
-                )}
+                ) : null}
               </div>
             </div>
           ))}
@@ -117,4 +124,3 @@ export function VaultV2Timelocks({ vaultAddress, preloadedData }: VaultV2Timeloc
     </Card>
   );
 }
-

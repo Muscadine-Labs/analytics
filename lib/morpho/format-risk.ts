@@ -1,5 +1,57 @@
 import type { OracleTimestampData } from './oracle-utils';
 
+/** Whether a vault position has any allocated assets (USD or raw token amount). */
+export function hasActiveAllocation(
+  allocationUsd?: number | null,
+  allocationAssets?: string | number | null
+): boolean {
+  if ((allocationUsd ?? 0) > 0) return true;
+  if (allocationAssets === null || allocationAssets === undefined) return false;
+  try {
+    return BigInt(allocationAssets) > 0n;
+  } catch {
+    return false;
+  }
+}
+
+/** Whether a cap has a non-zero absolute or relative limit. */
+export function hasNonZeroCap(
+  absoluteCap?: string | null,
+  relativeCap?: string | null
+): boolean {
+  try {
+    if (absoluteCap != null && BigInt(absoluteCap) > 0n) return true;
+    if (relativeCap != null && BigInt(relativeCap) > 0n) return true;
+  } catch {
+    // fall through
+  }
+  return false;
+}
+
+/** Show in allocations/risk when allocated or capped (non-zero cap limits). */
+export function shouldShowMarketEntry(
+  allocationUsd?: number | null,
+  allocationAssets?: string | number | null,
+  absoluteCap?: string | null,
+  relativeCap?: string | null
+): boolean {
+  if (hasActiveAllocation(allocationUsd, allocationAssets)) return true;
+  if (hasNonZeroCap(absoluteCap, relativeCap)) return true;
+  return false;
+}
+
+/** Show adapter when allocated, capped, or has visible underlying markets. */
+export function shouldShowAdapterEntry(
+  allocationUsd?: number | null,
+  allocationAssets?: string | number | null,
+  absoluteCap?: string | null,
+  relativeCap?: string | null,
+  hasVisibleMarkets = false
+): boolean {
+  if (hasVisibleMarkets) return true;
+  return shouldShowMarketEntry(allocationUsd, allocationAssets, absoluteCap, relativeCap);
+}
+
 /** Gold-standard utilization target (IRM kink default). */
 export const UTILIZATION_GOLD_STANDARD = 0.9;
 

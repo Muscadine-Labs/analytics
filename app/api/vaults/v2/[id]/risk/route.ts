@@ -61,10 +61,55 @@ type GraphVaultResponse = {
     liquidityUsd?: number | null;
     asset?: { symbol?: string; decimals?: number } | null;
     liquidityAdapter?: { address?: string | null } | null;
+    liquidityData?: {
+      __typename?: string | null;
+      market?: {
+        marketId?: string | null;
+        loanAsset?: { symbol?: string | null; decimals?: number | null } | null;
+        collateralAsset?: { symbol?: string | null; decimals?: number | null } | null;
+      } | null;
+    } | null;
+    caps?: {
+      items?: Array<{
+        type?: string | null;
+        absoluteCap?: string | number | null;
+        relativeCap?: string | number | null;
+        allocation?: string | number | null;
+        data?: {
+          __typename?: string | null;
+          adapterAddress?: string | null;
+          market?: {
+            id?: string | null;
+            marketId?: string | null;
+            loanAsset?: { symbol?: string | null; decimals?: number | null; address?: string | null } | null;
+            collateralAsset?: { symbol?: string | null; decimals?: number | null; address?: string | null } | null;
+            oracleAddress?: string | null;
+            irmAddress?: string | null;
+            lltv?: string | number | null;
+            state?: {
+              supplyAssetsUsd?: number | null;
+              borrowAssetsUsd?: number | null;
+              collateralAssetsUsd?: number | null;
+              liquidityAssetsUsd?: number | null;
+              utilization?: number | null;
+              supplyApy?: number | null;
+              borrowApy?: number | null;
+            } | null;
+          } | null;
+        } | null;
+      } | null> | null;
+    } | null;
     adapters?: {
       items?: Array<GraphAdapter | null> | null;
     } | null;
   } | null;
+};
+
+export type V2LiquidityMarket = {
+  marketId: string;
+  label: string;
+  collateralSymbol: string | null;
+  loanSymbol: string | null;
 };
 
 export type V2MarketRiskData = {
@@ -73,6 +118,10 @@ export type V2MarketRiskData = {
   allocationUsd: number;
   allocationAssets: string | null;
   oracleTimestampData?: OracleTimestampData | null;
+  /** Market absolute cap from vault caps (raw token amount). */
+  absoluteCap?: string | null;
+  /** Market relative cap from vault caps (1e18 = 100%). */
+  relativeCap?: string | null;
 };
 
 export type V2UnderlyingVault = {
@@ -95,6 +144,10 @@ export type V2AdapterRiskData = {
   underlyingVaultAddress?: string | null;
   /** Vault or position net APY (0–1, Morpho API scale). */
   apy?: number | null;
+  /** Adapter absolute cap from vault caps (raw token amount). */
+  absoluteCap?: string | null;
+  /** Adapter relative cap from vault caps (1e18 = 100%). */
+  relativeCap?: string | null;
 };
 
 export type V2IdleAllocation = {
@@ -109,12 +162,18 @@ export type V2VaultRiskResponse = {
   vaultRiskGrade: MarketRiskGrade;
   vaultAsset: { symbol: string; decimals: number } | null;
   liquidityAdapterAddress: string | null;
+  /** Designated liquidity routing market (from vault liquidityData). */
+  liquidityMarket: V2LiquidityMarket | null;
   /** Assets held in the vault contract, not deployed to any adapter */
   idle: V2IdleAllocation;
   adapters: V2AdapterRiskData[];
   /** V2 vault net APY (0–1). */
   vaultNetApy?: number | null;
 };
+
+const ADAPTER_LIMIT = 50;
+const CAP_LIMIT = 50;
+const POSITION_LIMIT = 20;
 
 const VAULT_V2_RISK_QUERY = gql`
   query VaultV2Risk($address: String!, $chainId: Int!, $adapterLimit: Int!, $positionLimit: Int!) {
@@ -127,6 +186,16 @@ const VAULT_V2_RISK_QUERY = gql`
       liquidityUsd
       asset { symbol decimals }
       liquidityAdapter { address }
+      liquidityData {
+        __typename
+        ... on MarketV1LiquidityData {
+          market {
+            marketId
+            loanAsset { symbol decimals }
+            collateralAsset { symbol decimals }
+          }
+        }
+      }
       adapters(first: $adapterLimit) {
         items {
           __typename
@@ -186,6 +255,48 @@ const VAULT_V2_RISK_QUERY = gql`
                     supplyApy
                     borrowApy
                   }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
+const VAULT_V2_CAP_MARKETS_QUERY = gql`
+  query VaultV2CapMarkets($address: String!, $chainId: Int!, $capLimit: Int!) {
+    vault: vaultV2ByAddress(address: $address, chainId: $chainId) {
+      caps(first: $capLimit) {
+        items {
+          type
+          absoluteCap
+          relativeCap
+          allocation
+          data {
+            __typename
+            ... on AdapterCapData {
+              adapterAddress
+            }
+            ... on MarketV1CapData {
+              adapterAddress
+              market {
+                id
+                marketId
+                loanAsset { symbol decimals address }
+                collateralAsset { symbol decimals address }
+                oracleAddress
+                irmAddress
+                lltv
+                state {
+                  supplyAssetsUsd
+                  borrowAssetsUsd
+                  collateralAssetsUsd
+                  liquidityAssetsUsd
+                  utilization
+                  supplyApy
+                  borrowApy
                 }
               }
             }
@@ -284,20 +395,224 @@ async function buildMarketRisk(
   };
 }
 
+function marketPairLabel(
+  collateralSymbol?: string | null,
+  loanSymbol?: string | null
+): string | null {
+  if (collateralSymbol && loanSymbol) return `${collateralSymbol}/${loanSymbol}`;
+  return collateralSymbol ?? loanSymbol ?? null;
+}
+
+type GraphLiquidityData = NonNullable<GraphVaultResponse['vault']>['liquidityData'];
+
+function parseLiquidityMarket(
+  liquidityData: GraphLiquidityData | null | undefined
+): V2LiquidityMarket | null {
+  if (!liquidityData) return null;
+  const market = liquidityData?.__typename === 'MarketV1LiquidityData'
+    ? liquidityData.market
+    : null;
+  if (!market?.marketId) return null;
+
+  const collateralSymbol = market.collateralAsset?.symbol ?? null;
+  const loanSymbol = market.loanAsset?.symbol ?? null;
+
+  return {
+    marketId: market.marketId,
+    label: marketPairLabel(collateralSymbol, loanSymbol) ?? market.marketId,
+    collateralSymbol,
+    loanSymbol,
+  };
+}
+
+type GraphCapItem = NonNullable<
+  NonNullable<NonNullable<GraphVaultResponse['vault']>['caps']>['items']
+>[number];
+
+type GraphCapMarket = NonNullable<
+  NonNullable<NonNullable<GraphCapItem>['data']>['market']
+>;
+
+function capMarketToV1Data(capMarket: GraphCapMarket | null | undefined): (V1VaultMarketData & { marketId?: string }) | null {
+  if (!capMarket?.marketId && !capMarket?.id) return null;
+
+  const loan = capMarket.loanAsset;
+  const collateral = capMarket.collateralAsset;
+  if (!loan?.symbol || !collateral?.symbol) return null;
+
+  const marketId = capMarket.marketId ?? capMarket.id ?? '';
+
+  return {
+    id: capMarket.id ?? marketId,
+    uniqueKey: marketId,
+    marketId,
+    loanAsset: {
+      symbol: loan.symbol,
+      decimals: loan.decimals ?? 18,
+      address: loan.address ?? '',
+    },
+    collateralAsset: {
+      symbol: collateral.symbol,
+      decimals: collateral.decimals ?? 18,
+      address: collateral.address ?? '',
+    },
+    oracleAddress: capMarket.oracleAddress ?? null,
+    oracle: null,
+    irmAddress: capMarket.irmAddress ?? null,
+    lltv: capMarket.lltv != null ? String(capMarket.lltv) : null,
+    realizedBadDebt: null,
+    state: capMarket.state
+      ? {
+          supplyAssetsUsd: capMarket.state.supplyAssetsUsd ?? null,
+          borrowAssetsUsd: capMarket.state.borrowAssetsUsd ?? null,
+          collateralAssetsUsd: capMarket.state.collateralAssetsUsd ?? null,
+          liquidityAssetsUsd: capMarket.state.liquidityAssetsUsd ?? null,
+          utilization: capMarket.state.utilization ?? null,
+          supplyApy: capMarket.state.supplyApy ?? null,
+          borrowApy: capMarket.state.borrowApy ?? null,
+        }
+      : null,
+    vaultSupplyAssets: null,
+    vaultSupplyAssetsUsd: null,
+    vaultTotalAssetsUsd: null,
+    marketTotalSupplyUsd: capMarket.state?.supplyAssetsUsd ?? null,
+  };
+}
+
+function capAmountString(value: string | number | null | undefined): string {
+  if (value === null || value === undefined) return '0';
+  return typeof value === 'string' ? value : value.toString();
+}
+
+function capFieldsFromGraphCap(cap: NonNullable<GraphCapItem>): {
+  absoluteCap: string;
+  relativeCap: string;
+} {
+  return {
+    absoluteCap: capAmountString(cap.absoluteCap),
+    relativeCap: capAmountString(cap.relativeCap),
+  };
+}
+
+function isMarketCapForAdapter(cap: GraphCapItem | null | undefined, adapterAddress: string): boolean {
+  if (!cap) return false;
+  const isMarketCap =
+    cap.type === 'MarketV1' || cap.data?.__typename === 'MarketV1CapData';
+  if (!isMarketCap) return false;
+
+  const adapter = cap.data?.adapterAddress;
+  return adapter?.toLowerCase() === adapterAddress.toLowerCase();
+}
+
+function marketRiskKey(market: V1VaultMarketData & { marketId?: string }): string {
+  const key = market.uniqueKey || market.marketId || market.id;
+  return key.toLowerCase();
+}
+
+function findAdapterCap(
+  adapterAddress: string,
+  capItems: GraphCapItem[] | null | undefined
+): { absoluteCap: string; relativeCap: string } | null {
+  for (const cap of capItems ?? []) {
+    if (!cap) continue;
+    const isAdapterCap =
+      cap.type === 'Adapter' || cap.data?.__typename === 'AdapterCapData';
+    if (!isAdapterCap) continue;
+
+    const capAdapterAddress = cap.data?.adapterAddress;
+    if (capAdapterAddress?.toLowerCase() !== adapterAddress.toLowerCase()) continue;
+
+    return capFieldsFromGraphCap(cap);
+  }
+  return null;
+}
+
+function adapterAssetsString(
+  assets: string | number | null | undefined
+): string | null {
+  if (assets === null || assets === undefined) return null;
+  return String(assets);
+}
+
+async function mergeCapMarketsForAdapter(
+  adapterAddress: string,
+  existingMarkets: V2MarketRiskData[],
+  capItems: GraphCapItem[] | null | undefined
+): Promise<V2MarketRiskData[]> {
+  const items = capItems ?? [];
+  const byKey = new Map<string, V2MarketRiskData>();
+
+  for (const entry of existingMarkets) {
+    byKey.set(marketRiskKey(entry.market), entry);
+  }
+
+  for (const cap of items) {
+    if (!cap || !isMarketCapForAdapter(cap, adapterAddress)) continue;
+
+    const marketData = capMarketToV1Data(
+      (cap.data as { market?: GraphCapMarket | null } | null | undefined)?.market
+    );
+    if (!marketData) continue;
+
+    const key = marketRiskKey(marketData);
+    const capFields = capFieldsFromGraphCap(cap);
+    const existing = byKey.get(key);
+
+    if (existing) {
+      byKey.set(key, { ...existing, ...capFields });
+      continue;
+    }
+
+    const allocation =
+      cap.allocation === null || cap.allocation === undefined
+        ? '0'
+        : String(cap.allocation);
+
+    byKey.set(
+      key,
+      {
+        ...(await buildMarketRisk(
+          marketData,
+          0,
+          allocation === '0' ? null : allocation
+        )),
+        ...capFields,
+      }
+    );
+  }
+
+  return Array.from(byKey.values());
+}
+
 async function computeAdapterRisk(
   adapter: GraphAdapter,
   chainId: number,
-  liquidityAdapterAddress: string | null
+  liquidityAdapterAddress: string | null,
+  liquidityMarket: V2LiquidityMarket | null,
+  capItems: GraphCapItem[] | null | undefined
 ): Promise<V2AdapterRiskData | null> {
   const allocationUsd = adapter.assetsUsd ?? 0;
+  const allocationAssets = adapterAssetsString(adapter.assets);
+  const adapterCap = findAdapterCap(adapter.address, capItems);
+  const adapterCapFields = {
+    absoluteCap: adapterCap?.absoluteCap ?? null,
+    relativeCap: adapterCap?.relativeCap ?? null,
+  };
   const isLiquidityAdapter =
     liquidityAdapterAddress !== null &&
     adapter.address.toLowerCase() === liquidityAdapterAddress.toLowerCase();
 
   if (adapter.__typename === 'MetaMorphoAdapter' && adapter.metaMorpho?.address) {
     const { markets } = await fetchV1VaultMarkets(adapter.metaMorpho.address, chainId);
+    const v2Allocated = allocationUsd > 0;
     const marketRisks = await Promise.all(
-      markets.map((m) => buildMarketRisk(m, m.vaultSupplyAssetsUsd ?? 0, m.vaultSupplyAssets ?? null))
+      markets.map((m) =>
+        buildMarketRisk(
+          m,
+          v2Allocated ? (m.vaultSupplyAssetsUsd ?? 0) : 0,
+          v2Allocated ? (m.vaultSupplyAssets ?? null) : null
+        )
+      )
     );
 
     const { weightedScore, grade } = computeWeightedRisk(marketRisks);
@@ -309,17 +624,18 @@ async function computeAdapterRisk(
       adapterType: 'MetaMorphoAdapter',
       adapterLabel: vaultName,
       allocationUsd,
-      allocationAssets: adapter.assets ?? null,
+      allocationAssets,
       riskScore: weightedScore,
       riskGrade: grade,
       apy,
-      markets: [],
+      markets: marketRisks,
       underlyingVault: {
         address: adapter.metaMorpho.address,
         name: adapter.metaMorpho.name ?? null,
         symbol: adapter.metaMorpho.symbol ?? null,
       },
       underlyingVaultAddress: adapter.metaMorpho.address,
+      ...adapterCapFields,
     };
   }
 
@@ -331,38 +647,48 @@ async function computeAdapterRisk(
         adapterType: 'MorphoMarketV1Adapter',
         adapterLabel: 'Morpho Market Adapter',
         allocationUsd,
-        allocationAssets: adapter.assets ?? null,
+        allocationAssets,
         riskScore: 0,
         riskGrade: 'F',
         markets: [],
         isLiquidityAdapter,
+        ...adapterCapFields,
       };
     }
 
-    const marketRisks = await Promise.all(
-      positions.map((pos) =>
-        buildMarketRisk(
-          pos!.market,
-          pos!.state?.supplyAssetsUsd ?? 0,
-          pos!.state?.supplyAssets ?? null
+    const marketRisks = await mergeCapMarketsForAdapter(
+      adapter.address,
+      await Promise.all(
+        positions.map((pos) =>
+          buildMarketRisk(
+            pos!.market,
+            pos!.state?.supplyAssetsUsd ?? 0,
+            pos!.state?.supplyAssets ?? null
+          )
         )
-      )
+      ),
+      capItems
     );
 
     const { weightedScore, grade } = computeWeightedRisk(marketRisks);
     const apy = weightedMarketSupplyApy(marketRisks);
+    const adapterLabel =
+      isLiquidityAdapter && liquidityMarket?.label
+        ? liquidityMarket.label
+        : 'Morpho Market Adapter';
 
     return {
       adapterAddress: adapter.address,
       adapterType: 'MorphoMarketV1Adapter',
-      adapterLabel: 'Morpho Market Adapter',
+      adapterLabel,
       allocationUsd,
-      allocationAssets: adapter.assets ?? null,
+      allocationAssets,
       riskScore: weightedScore,
       riskGrade: grade,
       apy,
       markets: marketRisks,
       isLiquidityAdapter,
+      ...adapterCapFields,
     };
   }
 
@@ -423,19 +749,26 @@ export async function GET(
       throw new AppError('Vault not found in configuration', 404, 'VAULT_NOT_FOUND');
     }
 
-    const data = await morphoGraphQLClient.request<GraphVaultResponse>(
-      VAULT_V2_RISK_QUERY,
-      {
+    const [data, capData] = await Promise.all([
+      morphoGraphQLClient.request<GraphVaultResponse>(VAULT_V2_RISK_QUERY, {
         address,
         chainId: cfg.chainId ?? BASE_CHAIN_ID,
-        adapterLimit: 20,
-        positionLimit: 20,
-      }
-    );
+        adapterLimit: ADAPTER_LIMIT,
+        positionLimit: POSITION_LIMIT,
+      }),
+      morphoGraphQLClient.request<Pick<GraphVaultResponse, 'vault'>>(VAULT_V2_CAP_MARKETS_QUERY, {
+        address,
+        chainId: cfg.chainId ?? BASE_CHAIN_ID,
+        capLimit: CAP_LIMIT,
+      }),
+    ]);
 
     if (!data.vault) {
       throw new AppError('Vault not found in Morpho API', 404, 'VAULT_NOT_FOUND');
     }
+
+    const capItems = capData.vault?.caps?.items ?? [];
+    const liquidityMarket = parseLiquidityMarket(data.vault.liquidityData ?? null);
 
     const adapters = data.vault.adapters?.items?.filter((a): a is GraphAdapter => Boolean(a)) ?? [];
     const liquidityAdapterAddress = data.vault.liquidityAdapter?.address ?? null;
@@ -443,7 +776,13 @@ export async function GET(
     const adapterRisks = (
       await Promise.all(
         adapters.map((adapter) =>
-          computeAdapterRisk(adapter, cfg.chainId, liquidityAdapterAddress)
+          computeAdapterRisk(
+            adapter,
+            cfg.chainId,
+            liquidityAdapterAddress,
+            liquidityMarket,
+            capItems
+          )
         )
       )
     ).filter((a): a is V2AdapterRiskData => a !== null);
@@ -479,6 +818,7 @@ export async function GET(
       vaultRiskGrade: getGradeFromScore(vaultRiskScore),
       vaultAsset,
       liquidityAdapterAddress,
+      liquidityMarket,
       idle: {
         assetsUsd: idleAssetsUsd,
         assets: idleAssets,

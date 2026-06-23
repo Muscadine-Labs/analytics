@@ -6,6 +6,10 @@ import { getVaultByAddress } from '@/lib/config/vaults';
 import { handleApiError, AppError } from '@/lib/utils/error-handler';
 import { createRateLimitMiddleware, RATE_LIMIT_REQUESTS_PER_MINUTE, MINUTE_MS } from '@/lib/utils/rate-limit';
 import { BASE_CHAIN_ID } from '@/lib/constants';
+import {
+  enrichTimelocksWithAbdication,
+  isHiddenTimelock,
+} from '@/lib/morpho/vault-v2-timelocks';
 
 type GraphAdapter = {
   __typename?: 'MetaMorphoAdapter' | 'MorphoMarketV1Adapter' | string | null;
@@ -27,13 +31,23 @@ type GraphCap = {
     | {
         __typename?: 'MarketV1CapData';
         adapterAddress?: string | null;
-        market?: { marketId?: string | null } | null;
+        market?: {
+          marketId?: string | null;
+          loanAsset?: { symbol?: string | null; decimals?: number | null } | null;
+          collateralAsset?: { symbol?: string | null; decimals?: number | null } | null;
+        } | null;
       }
-    | { __typename?: 'CollateralCapData'; collateralAddress?: string | null }
+    | {
+        __typename?: 'CollateralCapData';
+        collateralAddress?: string | null;
+        collateralToken?: { symbol?: string | null; decimals?: number | null; address?: string | null } | null;
+      }
     | { __typename?: string | null }
     | null
   ) | null;
 };
+
+type VaultAssetRef = { symbol?: string | null; decimals?: number | null } | null | undefined;
 
 type GraphVaultGovernanceResponse = {
   vault?: {
@@ -45,9 +59,18 @@ type GraphVaultGovernanceResponse = {
     allocators?: Array<{ allocator?: { address?: string | null } | null } | null> | null;
     sentinels?: Array<{ sentinel?: { address?: string | null } | null } | null> | null;
     liquidityAdapter?: GraphAdapter | null;
+    liquidityData?: {
+      __typename?: string | null;
+      market?: {
+        marketId?: string | null;
+        loanAsset?: { symbol?: string | null; decimals?: number | null } | null;
+        collateralAsset?: { symbol?: string | null; decimals?: number | null } | null;
+      } | null;
+    } | null;
     adapters?: { items?: Array<GraphAdapter | null> | null } | null;
     caps?: { items?: Array<GraphCap | null> | null } | null;
     timelocks?: Array<{ selector?: string | null; functionName?: string | null; duration?: number | string | null } | null> | null;
+    asset?: VaultAssetRef;
   } | null;
 };
 
@@ -63,10 +86,20 @@ export type VaultV2GovernanceResponse = {
   allocators: string[];
   sentinels: string[];
   liquidityAdapter: AdapterInfo | null;
+  /** Designated liquidity routing market (from vault liquidityData). */
+  liquidityMarket: GovernanceLiquidityMarket | null;
   idle: VaultV2IdleAllocation;
   adapters: AdapterInfo[];
   caps: CapInfo[];
   timelocks: TimelockInfo[];
+  vaultAsset: { symbol: string; decimals: number } | null;
+};
+
+export type GovernanceLiquidityMarket = {
+  marketId: string;
+  label: string;
+  collateralSymbol: string | null;
+  loanSymbol: string | null;
 };
 
 export type AdapterInfo = {
@@ -86,12 +119,19 @@ export type CapInfo = {
   adapterAddress?: string | null;
   marketKey?: string | null;
   collateralAddress?: string | null;
+  /** e.g. cbDOGE/USDC or cbBTC */
+  label?: string | null;
+  loanSymbol?: string | null;
+  collateralSymbol?: string | null;
+  amountSymbol?: string | null;
+  amountDecimals?: number | null;
 };
 
 export type TimelockInfo = {
   selector: string;
   functionName: string;
   durationSeconds: number;
+  abdicated: boolean;
 };
 
 const ADAPTER_LIMIT = 50;
@@ -100,6 +140,7 @@ const VAULT_V2_GOVERNANCE_QUERY = gql`
   query VaultV2Governance($address: String!, $chainId: Int!, $adapterLimit: Int!) {
     vault: vaultV2ByAddress(address: $address, chainId: $chainId) {
       address
+      asset { symbol decimals }
       idleAssets
       idleAssetsUsd
       owner { address }
@@ -114,6 +155,16 @@ const VAULT_V2_GOVERNANCE_QUERY = gql`
         assetsUsd
         ... on MetaMorphoAdapter {
           metaMorpho { address name symbol }
+        }
+      }
+      liquidityData {
+        __typename
+        ... on MarketV1LiquidityData {
+          market {
+            marketId
+            loanAsset { symbol decimals }
+            collateralAsset { symbol decimals }
+          }
         }
       }
       adapters(first: $adapterLimit) {
@@ -141,10 +192,15 @@ const VAULT_V2_GOVERNANCE_QUERY = gql`
             }
             ... on MarketV1CapData {
               adapterAddress
-              market { marketId }
+              market {
+                marketId
+                loanAsset { symbol decimals }
+                collateralAsset { symbol decimals }
+              }
             }
             ... on CollateralCapData {
               collateralAddress
+              collateralToken { symbol decimals address }
             }
           }
         }
@@ -182,7 +238,76 @@ function mapAdapter(graph: GraphAdapter | null | undefined): AdapterInfo | null 
   };
 }
 
-function mapCap(graph: GraphCap | null | undefined): CapInfo | null {
+function marketPairLabel(
+  collateralSymbol?: string | null,
+  loanSymbol?: string | null
+): string | null {
+  if (collateralSymbol && loanSymbol) return `${collateralSymbol}/${loanSymbol}`;
+  return collateralSymbol ?? loanSymbol ?? null;
+}
+
+type GraphLiquidityData = NonNullable<GraphVaultGovernanceResponse['vault']>['liquidityData'];
+
+function parseLiquidityMarket(
+  liquidityData: GraphLiquidityData | null | undefined
+): GovernanceLiquidityMarket | null {
+  if (!liquidityData) return null;
+  const market =
+    liquidityData.__typename === 'MarketV1LiquidityData' ? liquidityData.market : null;
+  if (!market?.marketId) return null;
+
+  const collateralSymbol = market.collateralAsset?.symbol ?? null;
+  const loanSymbol = market.loanAsset?.symbol ?? null;
+
+  return {
+    marketId: market.marketId,
+    label: marketPairLabel(collateralSymbol, loanSymbol) ?? market.marketId,
+    collateralSymbol,
+    loanSymbol,
+  };
+}
+
+function enrichAdapterCapLabels(
+  caps: CapInfo[],
+  adapters: AdapterInfo[],
+  liquidityAdapter: AdapterInfo | null,
+  liquidityMarket: GovernanceLiquidityMarket | null
+): CapInfo[] {
+  const liquidityAddress = liquidityAdapter?.address?.toLowerCase() ?? null;
+
+  return caps.map((cap) => {
+    if (cap.type !== 'Adapter' || !cap.adapterAddress) return cap;
+
+    const addr = cap.adapterAddress.toLowerCase();
+    if (liquidityAddress && addr === liquidityAddress && liquidityMarket?.label) {
+      return { ...cap, label: liquidityMarket.label };
+    }
+
+    const adapter =
+      adapters.find((a) => a.address.toLowerCase() === addr) ??
+      (liquidityAddress === addr ? liquidityAdapter : null);
+
+    if (adapter?.metaMorpho?.name) {
+      return { ...cap, label: adapter.metaMorpho.name };
+    }
+    if (adapter?.metaMorpho?.symbol) {
+      return { ...cap, label: adapter.metaMorpho.symbol };
+    }
+    if (adapter?.type === 'MorphoMarketV1Adapter') {
+      return {
+        ...cap,
+        label: liquidityMarket?.label ?? 'Morpho Market Adapter',
+      };
+    }
+
+    return cap;
+  });
+}
+
+function mapCap(
+  graph: GraphCap | null | undefined,
+  vaultAsset: VaultAssetRef
+): CapInfo | null {
   if (!graph) return null;
 
   const base: CapInfo = {
@@ -207,33 +332,79 @@ function mapCap(graph: GraphCap | null | undefined): CapInfo | null {
         : graph.allocation.toString(),
   };
 
-  if (graph.data?.__typename === 'AdapterCapData') {
-    const adapterData = graph.data as { __typename?: string | null; adapterAddress?: string | null };
-    return { ...base, adapterAddress: adapterData.adapterAddress ?? null };
-  }
+  const data = graph.data;
+  const capType = graph.type;
 
-  if (graph.data?.__typename === 'MarketV1CapData') {
-    const marketData = graph.data as {
-      __typename?: string | null;
-      adapterAddress?: string | null;
-      market?: { marketId?: string | null } | null;
-    };
+  const isAdapterCap =
+    capType === 'Adapter' || data?.__typename === 'AdapterCapData';
+  const isMarketCap =
+    capType === 'MarketV1' || data?.__typename === 'MarketV1CapData';
+  const isCollateralCap =
+    capType === 'Collateral' || data?.__typename === 'CollateralCapData';
+
+  if (isAdapterCap) {
+    const adapterData = data as { adapterAddress?: string | null } | null | undefined;
+    const symbol = vaultAsset?.symbol ?? null;
+    const decimals = vaultAsset?.decimals ?? null;
     return {
       ...base,
-      adapterAddress: marketData.adapterAddress ?? null,
-      marketKey: marketData.market?.marketId ?? null,
+      adapterAddress: adapterData?.adapterAddress ?? null,
+      label: symbol ? `${symbol} Adapter` : 'Adapter',
+      amountSymbol: symbol,
+      amountDecimals: decimals,
     };
   }
 
-  if (graph.data?.__typename === 'CollateralCapData') {
-    const collateralData = graph.data as { __typename?: string | null; collateralAddress?: string | null };
-    return { ...base, collateralAddress: collateralData.collateralAddress ?? null };
+  if (isMarketCap) {
+    const marketData = data as {
+      adapterAddress?: string | null;
+      market?: {
+        marketId?: string | null;
+        loanAsset?: { symbol?: string | null; decimals?: number | null } | null;
+        collateralAsset?: { symbol?: string | null; decimals?: number | null } | null;
+      } | null;
+    } | null | undefined;
+    const loan = marketData?.market?.loanAsset;
+    const collateral = marketData?.market?.collateralAsset;
+    const loanSymbol = loan?.symbol ?? null;
+    const collateralSymbol = collateral?.symbol ?? null;
+    const label =
+      marketPairLabel(collateralSymbol, loanSymbol) ??
+      marketData?.market?.marketId ??
+      null;
+
+    return {
+      ...base,
+      adapterAddress: marketData?.adapterAddress ?? null,
+      marketKey: marketData?.market?.marketId ?? null,
+      label,
+      loanSymbol,
+      collateralSymbol,
+      amountSymbol: loanSymbol ?? vaultAsset?.symbol ?? null,
+      amountDecimals: loan?.decimals ?? vaultAsset?.decimals ?? null,
+    };
+  }
+
+  if (isCollateralCap) {
+    const collateralData = data as {
+      collateralAddress?: string | null;
+      collateralToken?: { symbol?: string | null; decimals?: number | null; address?: string | null } | null;
+    } | null | undefined;
+    const token = collateralData?.collateralToken;
+    return {
+      ...base,
+      collateralAddress: collateralData?.collateralAddress ?? token?.address ?? null,
+      label: token?.symbol ?? null,
+      collateralSymbol: token?.symbol ?? null,
+      amountSymbol: token?.symbol ?? null,
+      amountDecimals: token?.decimals ?? null,
+    };
   }
 
   return base;
 }
 
-function mapTimelock(entry: { selector?: string | null; functionName?: string | null; duration?: number | string | null } | null | undefined): TimelockInfo | null {
+function mapTimelock(entry: { selector?: string | null; functionName?: string | null; duration?: number | string | null } | null | undefined): Omit<TimelockInfo, 'abdicated'> | null {
   if (!entry?.selector || !entry.functionName) return null;
 
   return {
@@ -301,16 +472,34 @@ export async function GET(
         .filter((a): a is AdapterInfo => a !== null) ?? [];
 
     const liquidityAdapter = mapAdapter(data.vault.liquidityAdapter);
+    const liquidityMarket = parseLiquidityMarket(data.vault.liquidityData ?? null);
 
-    const caps =
+    const vaultAsset = data.vault.asset
+      ? {
+          symbol: data.vault.asset.symbol ?? 'UNKNOWN',
+          decimals: data.vault.asset.decimals ?? 18,
+        }
+      : null;
+
+    const caps = enrichAdapterCapLabels(
       data.vault.caps?.items
-        ?.map(mapCap)
-        .filter((c): c is CapInfo => c !== null) ?? [];
+        ?.map((c) => mapCap(c, data.vault?.asset))
+        .filter((c): c is CapInfo => c !== null) ?? [],
+      adapters,
+      liquidityAdapter,
+      liquidityMarket
+    );
 
-    const timelocks =
+    const rawTimelocks =
       data.vault.timelocks
         ?.map(mapTimelock)
-        .filter((t): t is TimelockInfo => t !== null) ?? [];
+        .filter((t): t is Omit<TimelockInfo, 'abdicated'> => t !== null)
+        .filter((t) => !isHiddenTimelock(t)) ?? [];
+
+    const timelocks = await enrichTimelocksWithAbdication(
+      address as `0x${string}`,
+      rawTimelocks
+    );
 
     const response: VaultV2GovernanceResponse = {
       vaultAddress: address,
@@ -325,6 +514,7 @@ export async function GET(
           ?.map((s) => s?.sentinel?.address)
           .filter((addr): addr is string => Boolean(addr)) ?? [],
       liquidityAdapter,
+      liquidityMarket,
       idle: {
         assetsUsd: data.vault.idleAssetsUsd ?? 0,
         assets:
@@ -333,6 +523,7 @@ export async function GET(
       adapters,
       caps,
       timelocks,
+      vaultAsset,
     };
 
     const responseHeaders = new Headers(rateLimitResult.headers);

@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation';
 import { Shield } from 'lucide-react';
 import { getScanUrlForChain, getScanNameForChain } from '@/lib/constants';
 import { useVaultV2Complete } from '@/lib/hooks/useVaultV2Complete';
-import { getVaultCategory } from '@/lib/config/vaults';
+import { getVaultListCategory } from '@/lib/config/vaults';
 import { AppShell } from '@/components/layout/AppShell';
 import { KpiCard } from '@/components/KpiCard';
 import { VaultRiskV2 } from '@/components/morpho/VaultRiskV2';
@@ -19,6 +19,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Skeleton } from '@/components/ui/skeleton';
+import { formatTokenAmount } from '@/lib/format/number';
 
 export default function V2VaultPage() {
   const params = useParams();
@@ -82,8 +83,15 @@ export default function V2VaultPage() {
     );
   }
 
-  const category = getVaultCategory(vault.name);
-  const vaultBadge = category === 'prime' ? 'V2 Prime' : category === 'vineyard' ? 'V2 Vineyard' : 'V2';
+  const category = getVaultListCategory(vault.address, vault.name);
+  const vaultBadge =
+    category === 'prime'
+      ? 'V2 Prime'
+      : category === 'vineyard'
+        ? 'V2 Vineyard'
+        : category === 'frontier'
+          ? 'V2 Frontier'
+          : 'V2';
 
   const morphoUiUrl = vault.address 
     ? `https://app.morpho.org/base/vault/${vault.address.toLowerCase()}`
@@ -93,6 +101,19 @@ export default function V2VaultPage() {
   const vaultName = vault.name ?? 'Unknown Vault';
   const vaultSymbol = vault.symbol ?? 'UNKNOWN';
   const vaultAsset = vault.asset ?? 'UNKNOWN';
+
+  const tvlSubtitle = (() => {
+    if (vault.totalAssets && vault.assetDecimals != null) {
+      try {
+        const amount = formatTokenAmount(BigInt(vault.totalAssets), vault.assetDecimals, 2);
+        const symbol = vault.asset ?? vault.symbol;
+        return symbol ? `${amount} ${symbol}` : amount;
+      } catch {
+        // ignore invalid totalAssets
+      }
+    }
+    return 'Total Value Locked';
+  })();
 
   return (
     <AppShell
@@ -159,7 +180,7 @@ export default function V2VaultPage() {
 
             {/* Metrics Grid */}
             <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-              <KpiCard title="TVL" value={vault.tvl} subtitle="Total Value Locked" format="usd" />
+              <KpiCard title="TVL" value={vault.tvl} subtitle={tvlSubtitle} format="usd" />
               <KpiCard title="APY" value={vault.apy} subtitle="Current yield rate" format="percentage" />
               <KpiCard title="Depositors" value={vault.depositors} subtitle="Total depositors" format="number" />
               <KpiCard 
