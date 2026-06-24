@@ -4,6 +4,7 @@ import { computeMetricsForMarket } from './compute';
 import { fetchMorphoMarkets } from './query';
 import type { MorphoMarketMetrics } from './types';
 import type { Market } from '@morpho-org/blue-api-sdk';
+import { resolveMarketId } from './market-id';
 
 type RatingOptions = {
   limit?: number;
@@ -33,10 +34,7 @@ export async function getMorphoMarketRatings(
   const rawMarkets = await fetchMorphoMarkets(limit, config);
 
   const filtered = marketId
-    ? rawMarkets.filter((market) => 
-        market.id === marketId ||
-        (market as Market & { marketId?: string }).marketId === marketId
-      )
+    ? rawMarkets.filter((market) => resolveMarketId(market as { marketId?: string | null; id?: string | null }) === marketId)
     : rawMarkets;
 
   const metrics = filtered.map((market) =>

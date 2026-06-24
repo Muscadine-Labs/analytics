@@ -59,8 +59,8 @@ export async function GET(request: Request) {
               allocation {
                 supplyAssetsUsd
                 market {
-                  id
                   marketId
+                  chain { id }
                   loanAsset { symbol }
                   collateralAsset { symbol }
                   state {

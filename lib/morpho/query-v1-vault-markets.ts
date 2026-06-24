@@ -1,4 +1,5 @@
 import { gql } from 'graphql-request';
+import { resolveMarketId } from './market-id';
 import { morphoGraphQLClient } from './graphql-client';
 import { BASE_CHAIN_ID } from '@/lib/constants';
 
@@ -19,8 +20,8 @@ const VAULT_V1_MARKETS_QUERY = gql`
           supplyAssets
           supplyAssetsUsd
           market {
-            id
             marketId
+            chain { id }
             loanAsset {
               symbol
               decimals
@@ -31,7 +32,6 @@ const VAULT_V1_MARKETS_QUERY = gql`
               decimals
               address
             }
-            oracleAddress
             oracle {
               id
               address
@@ -134,8 +134,8 @@ export type V1VaultMarketsQueryResponse = {
         supplyAssets: string | null;
         supplyAssetsUsd: number | null;
         market: {
-          id: string;
           marketId: string;
+          chain?: { id?: number | null } | null;
           loanAsset: {
             symbol: string;
             decimals: number;
@@ -146,7 +146,6 @@ export type V1VaultMarketsQueryResponse = {
             decimals: number;
             address: string;
           } | null;
-          oracleAddress: string | null;
           oracle: {
             id: string;
             address: string;
@@ -206,12 +205,14 @@ export async function fetchV1VaultMarkets(
     .map((alloc) => {
       if (!alloc.market) return null;
 
+      const marketId = resolveMarketId(alloc.market);
+
       const market: V1VaultMarketData = {
-        id: alloc.market.id,
-        uniqueKey: alloc.market.marketId,
+        id: marketId,
+        uniqueKey: marketId,
         loanAsset: alloc.market.loanAsset || { symbol: 'Unknown', decimals: 18, address: '' },
         collateralAsset: alloc.market.collateralAsset || { symbol: 'Unknown', decimals: 18, address: '' },
-        oracleAddress: alloc.market.oracleAddress,
+        oracleAddress: alloc.market.oracle?.address ?? null,
         oracle: alloc.market.oracle
           ? {
               id: alloc.market.oracle.id,

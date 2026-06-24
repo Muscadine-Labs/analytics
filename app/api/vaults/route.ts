@@ -46,7 +46,7 @@ export async function GET(request: Request) {
               asset { address symbol decimals }
               performanceFee
               totalAssetsUsd
-              avgApy
+              avgNetApyExcludingRewards
               avgNetApy
               positions(first: ${GRAPHQL_FIRST_LIMIT}) {
                 items { user { address } }
@@ -54,7 +54,7 @@ export async function GET(request: Request) {
             }
           }
         `;
-        const result = await morphoGraphQLClient.request<{ vaultV2ByAddress?: { address: string; name: string; symbol?: string; listed?: boolean; asset?: { address?: string; symbol?: string; decimals?: number }; performanceFee?: number; totalAssetsUsd?: number; avgApy?: number; avgNetApy?: number; positions?: { items?: Array<{ user?: { address?: string } | null } | null> | null } | null } | null }>(v2Query, { address, chainId: BASE_CHAIN_ID });
+        const result = await morphoGraphQLClient.request<{ vaultV2ByAddress?: { address: string; name: string; symbol?: string; listed?: boolean; asset?: { address?: string; symbol?: string; decimals?: number }; performanceFee?: number; totalAssetsUsd?: number; avgNetApyExcludingRewards?: number; avgNetApy?: number; positions?: { items?: Array<{ user?: { address?: string } | null } | null> | null } | null } | null }>(v2Query, { address, chainId: BASE_CHAIN_ID });
         
         const vaultData = result?.vaultV2ByAddress;
         
@@ -63,7 +63,7 @@ export async function GET(request: Request) {
             address: vaultData.address,
             name: vaultData.name,
             totalAssetsUsd: vaultData.totalAssetsUsd,
-            avgApy: vaultData.avgApy,
+            avgNetApyExcludingRewards: vaultData.avgNetApyExcludingRewards,
           });
           return vaultData;
         }
@@ -127,8 +127,8 @@ export async function GET(request: Request) {
         riskTier: 'medium' as const,
         createdAt: new Date().toISOString(),
         tvl: v.totalAssetsUsd ?? null,
-        apy: v.avgNetApy != null ? v.avgNetApy * 100 : 
-             v.avgApy != null ? v.avgApy * 100 : null,
+        apy: v.avgNetApy != null ? v.avgNetApy * 100 :
+             v.avgNetApyExcludingRewards != null ? v.avgNetApyExcludingRewards * 100 : null,
         depositors: depositorCounts[v.address.toLowerCase()] ?? 0,
         revenueAllTime: null,
         feesAllTime: null,

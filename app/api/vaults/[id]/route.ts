@@ -140,10 +140,16 @@ export async function GET(
       } | null;
       txs?: {
         items: Array<{
-          blockNumber: number;
-          hash: string;
-          type: string;
+          blockNumber?: number | null;
+          hash?: string | null;
+          txHash?: string | null;
+          type?: string | null;
           user?: { address?: string | null } | null;
+          data?: {
+            sender?: string | null;
+            onBehalf?: string | null;
+            receiver?: string | null;
+          } | null;
         } | null> | null;
       } | null;
     };
@@ -157,7 +163,6 @@ export async function GET(
           listed
           metadata {
             description
-            forumLink
             image
           }
           allocators { address }
@@ -173,17 +178,16 @@ export async function GET(
             totalSupply
             apy
             netApy
-            netApyWithoutRewards
+            netApyExcludingRewards
             avgNetApy
-            dailyApy
-            dailyNetApy
-            weeklyApy
-            weeklyNetApy
+            dailyApy: avgNetApyExcludingRewards(lookback: ONE_DAY)
+            dailyNetApy: avgNetApy(lookback: ONE_DAY)
+            weeklyApy: avgNetApyExcludingRewards(lookback: SEVEN_DAYS)
+            weeklyNetApy: avgNetApy(lookback: SEVEN_DAYS)
             fee
-            rewards {
+            allRewards {
               asset { address chain { id } }
               supplyApr
-              yearlySupplyTokens
             }
             allocation {
               supplyAssets
@@ -193,7 +197,7 @@ export async function GET(
                 marketId
                 loanAsset { address name symbol }
                 collateralAsset { address name symbol }
-                oracleAddress
+                oracle { address }
                 irmAddress
                 lltv
                 state {
@@ -209,7 +213,6 @@ export async function GET(
                 }
               }
             }
-            lastTotalAssets
             allocationQueues: allocation {
               supplyQueueIndex
               withdrawQueueIndex
@@ -239,13 +242,18 @@ export async function GET(
           first: ${GRAPHQL_FIRST_LIMIT},
           where: { vaultAddress_in: [$address] }
         ) { items { user { address } } }
-        txs: transactions(
+        txs: vaultV1Transactions(
           first: ${GRAPHQL_TRANSACTIONS_LIMIT},
-          orderBy: Timestamp,
+          orderBy: Time,
           orderDirection: Desc,
-          where: { vaultAddress_in: [$address] }
+          where: { vaultAddress_in: [$address], chainId_in: [$chainId] }
         ) {
-          items { blockNumber hash type user { address } }
+          items {
+            blockNumber
+            txHash
+            type
+            user { address }
+          }
         }
       }
     `;
@@ -259,7 +267,6 @@ export async function GET(
           listed
           metadata {
             description
-            forumLink
             image
           }
           asset { address symbol decimals }
@@ -271,24 +278,31 @@ export async function GET(
           performanceFee
           managementFee
           maxApy
-          avgApy
+          avgNetApyExcludingRewards
           avgNetApy
           rewards {
             asset { address chain { id } }
             supplyApr
-            yearlySupplyTokens
           }
           positions(first: ${GRAPHQL_FIRST_LIMIT}) {
             items { user { address } }
           }
         }
-        txs: transactions(
+        txs: vaultV2transactions(
           first: ${GRAPHQL_TRANSACTIONS_LIMIT},
-          orderBy: Timestamp,
+          orderBy: Time,
           orderDirection: Desc,
-          where: { vaultAddress_in: [$address] }
+          where: { vaultAddress_in: [$address], chainId_in: [$chainId] }
         ) {
-          items { blockNumber hash type user { address } }
+          items {
+            blockNumber
+            txHash
+            type
+            data {
+              ... on VaultV2DepositData { sender onBehalf }
+              ... on VaultV2WithdrawData { sender receiver onBehalf }
+            }
+          }
         }
       }
     `;
@@ -305,7 +319,7 @@ export async function GET(
           address: cfg.address,
           name: (data.vaultV2ByAddress as Record<string, unknown>)?.name,
           totalAssetsUsd: (data.vaultV2ByAddress as Record<string, unknown>)?.totalAssetsUsd,
-          avgApy: (data.vaultV2ByAddress as Record<string, unknown>)?.avgApy,
+          avgNetApyExcludingRewards: (data.vaultV2ByAddress as Record<string, unknown>)?.avgNetApyExcludingRewards,
         });
       }
     } catch (graphqlError) {
@@ -401,7 +415,7 @@ export async function GET(
       performanceFee?: number | null;
       managementFee?: number | null;
       maxApy?: number | null;
-      avgApy?: number | null;
+      avgNetApyExcludingRewards?: number | null;
       avgNetApy?: number | null;
       curator?: { address?: string | null } | null;
       owner?: { address?: string | null } | null;
@@ -412,7 +426,6 @@ export async function GET(
       rewards?: Array<{
         asset?: { address?: string; chain?: { id?: number } | null } | null;
         supplyApr?: number | null;
-        yearlySupplyTokens?: number | null;
       }>;
       // V1 vault fields (in state object)
       state?: {
@@ -429,8 +442,7 @@ export async function GET(
         lastUpdate?: number | null;
         apy?: number | null;
         netApy?: number | null;
-        netApyWithoutRewards?: number | null;
-        avgApy?: number | null;
+        netApyExcludingRewards?: number | null;
         avgNetApy?: number | null;
         dailyApy?: number | null;
         dailyNetApy?: number | null;
@@ -440,10 +452,9 @@ export async function GET(
         monthlyNetApy?: number | null;
         fee?: number | null;
         warnings?: Array<{ type?: string; level?: string }>;
-        rewards?: Array<{
+        allRewards?: Array<{
           asset?: { address?: string; chain?: { id?: number } | null } | null;
           supplyApr?: number | null;
-          yearlySupplyTokens?: number | null;
         }>;
         allocation?: Array<{
           supplyAssets?: string | null;
@@ -453,7 +464,7 @@ export async function GET(
             marketId?: string;
             loanAsset?: { address?: string | null; name?: string | null; symbol?: string | null } | null;
             collateralAsset?: { address?: string | null; name?: string | null; symbol?: string | null } | null;
-            oracleAddress?: string | null;
+            oracle?: { address?: string | null } | null;
             irmAddress?: string | null;
             lltv?: string | null;
               state?: {
@@ -488,15 +499,8 @@ export async function GET(
     const v1Positions = (data.positions?.items || []);
     const allPositions = isV2 ? v2Positions : v1Positions;
     
-    // Handle transactions - both v1 and v2 use the same transactions query
-    const txs = (data.txs?.items || []).filter(
-      (t): t is {
-        blockNumber: number;
-        hash: string;
-        type: string;
-        user?: { address?: string | null } | null;
-      } => t !== null
-    );
+    // Handle transactions from vault-specific transaction queries
+    const txs = (data.txs?.items ?? []).filter((t): t is NonNullable<typeof t> => t !== null);
     
     const positions = allPositions.filter(
       (p): p is { user: { address: string } } => p !== null && p?.user !== null && p?.user !== undefined && p.user.address !== undefined
@@ -520,15 +524,15 @@ export async function GET(
     
     // Calculate APY - preserve null if all values are null/undefined
     const apyPct = isV2
-      ? (mv?.avgNetApy != null ? mv.avgNetApy * 100 : 
-         mv?.avgApy != null ? mv.avgApy * 100 : 
+      ? (mv?.avgNetApy != null ? mv.avgNetApy * 100 :
+         mv?.avgNetApyExcludingRewards != null ? mv.avgNetApyExcludingRewards * 100 :
          mv?.maxApy != null ? mv.maxApy * 100 : null)
       : (mv?.state?.netApy != null ? mv.state.netApy * 100 :
          mv?.state?.avgNetApy != null ? mv.state.avgNetApy * 100 :
          mv?.state?.apy != null ? mv.state.apy * 100 : null);
     
     const apyBasePct = isV2
-      ? (mv?.avgApy != null ? mv.avgApy * 100 : 
+      ? (mv?.avgNetApyExcludingRewards != null ? mv.avgNetApyExcludingRewards * 100 :
          mv?.maxApy != null ? mv.maxApy * 100 : null)
       : (mv?.state?.apy != null ? mv.state.apy * 100 : null);
     
@@ -570,10 +574,12 @@ export async function GET(
       feesAllTime: null,
       lastHarvest: null,
       apyBreakdown: isV2 ? {
-        apy: (mv?.avgApy ?? mv?.maxApy) != null ? (mv?.avgApy ?? mv?.maxApy ?? 0) * 100 : null,
+        apy: (mv?.avgNetApyExcludingRewards ?? mv?.maxApy) != null
+          ? (mv?.avgNetApyExcludingRewards ?? mv?.maxApy ?? 0) * 100
+          : null,
         netApy: mv?.avgNetApy != null ? mv.avgNetApy * 100 : null,
-        netApyWithoutRewards: mv?.avgNetApy != null ? mv.avgNetApy * 100 : null,
-        avgApy: mv?.avgApy != null ? mv.avgApy * 100 : null,
+        netApyWithoutRewards: mv?.avgNetApyExcludingRewards != null ? mv.avgNetApyExcludingRewards * 100 : null,
+        avgApy: mv?.avgNetApyExcludingRewards != null ? mv.avgNetApyExcludingRewards * 100 : null,
         avgNetApy: mv?.avgNetApy != null ? mv.avgNetApy * 100 : null,
         dailyApy: null,
         dailyNetApy: null,
@@ -585,7 +591,7 @@ export async function GET(
       } : {
         apy: mv?.state?.apy != null ? mv.state.apy * 100 : null,
         netApy: mv?.state?.netApy != null ? mv.state.netApy * 100 : null,
-        netApyWithoutRewards: mv?.state?.netApyWithoutRewards != null ? mv.state.netApyWithoutRewards * 100 : null,
+        netApyWithoutRewards: mv?.state?.netApyExcludingRewards != null ? mv.state.netApyExcludingRewards * 100 : null,
         avgApy: null,
         avgNetApy: mv?.state?.avgNetApy != null ? mv.state.avgNetApy * 100 : null,
         dailyApy: mv?.state?.dailyApy != null ? mv.state.dailyApy * 100 : null,
@@ -597,17 +603,17 @@ export async function GET(
         underlyingYieldApr: mv?.asset?.yield?.apr != null ? mv.asset.yield.apr * 100 : null,
       },
       rewards: isV2
-        ? (mv?.rewards || []).map((r: { asset?: { address?: string; chain?: { id?: number } | null } | null; supplyApr?: number | null; yearlySupplyTokens?: number | null }) => ({
+        ? (mv?.rewards || []).map((r) => ({
             assetAddress: r.asset?.address ?? '',
             chainId: r.asset?.chain?.id ?? null,
             supplyApr: r.supplyApr != null ? r.supplyApr * 100 : null,
-            yearlySupplyTokens: r.yearlySupplyTokens ? (typeof r.yearlySupplyTokens === 'bigint' ? Number(r.yearlySupplyTokens) : r.yearlySupplyTokens) : null,
+            yearlySupplyTokens: null,
           }))
-        : (mv?.state?.rewards || []).map((r) => ({
+        : (mv?.state?.allRewards || []).map((r) => ({
             assetAddress: r.asset?.address ?? '',
             chainId: r.asset?.chain?.id ?? null,
             supplyApr: r.supplyApr != null ? r.supplyApr * 100 : null,
-            yearlySupplyTokens: r.yearlySupplyTokens ? (typeof r.yearlySupplyTokens === 'bigint' ? Number(r.yearlySupplyTokens) : r.yearlySupplyTokens) : null,
+            yearlySupplyTokens: null,
           })),
       allocation: isV2
         ? [] // V2 vaults don't have allocation in the same format
@@ -616,7 +622,7 @@ export async function GET(
               marketId?: string | null;
               loanAsset?: { address?: string | null; name?: string | null; symbol?: string | null } | null;
               collateralAsset?: { address?: string | null; name?: string | null; symbol?: string | null } | null;
-              oracleAddress?: string | null;
+              oracle?: { address?: string | null } | null;
               irmAddress?: string | null;
               lltv?: string | number | null;
               state?: {
@@ -644,7 +650,7 @@ export async function GET(
                 collateralAssetAddress: a.market?.collateralAsset?.address ?? null,
                 collateralAssetName: a.market?.collateralAsset?.name ?? null,
                 collateralAssetSymbol: a.market?.collateralAsset?.symbol ?? null,
-                oracleAddress: a.market?.oracleAddress ?? null,
+                oracleAddress: a.market?.oracle?.address ?? null,
                 irmAddress: a.market?.irmAddress ?? null,
                 lltv: a.market?.lltv ? (typeof a.market.lltv === 'string' ? parseFloat(a.market.lltv) : Number(a.market.lltv)) : null,
                 supplyCap: a.supplyCap ? (typeof a.supplyCap === 'string' ? parseFloat(a.supplyCap) : Number(a.supplyCap)) : null,
@@ -689,10 +695,10 @@ export async function GET(
         timelock: isV2 ? null : (mv?.state?.timelock ?? null),
       },
       transactions: txs.map((t) => ({
-        blockNumber: t.blockNumber,
-        hash: t.hash,
-        type: t.type,
-        userAddress: t.user?.address ?? null,
+        blockNumber: t.blockNumber ?? 0,
+        hash: t.txHash ?? t.hash ?? '',
+        type: t.type ?? '',
+        userAddress: t.user?.address ?? t.data?.onBehalf ?? t.data?.sender ?? null,
       })),
       parameters: {
         performanceFeeBps: performanceFeeBps,

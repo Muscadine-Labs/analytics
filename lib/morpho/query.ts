@@ -8,8 +8,8 @@ const MARKETS_QUERY = gql`
   query MorphoMarkets($first: Int!, $chainIds: [Int!]) {
     markets(first: $first, where: { chainId_in: $chainIds }) {
       items {
-        id
         marketId
+        chain { id }
         loanAsset {
           symbol
           decimals

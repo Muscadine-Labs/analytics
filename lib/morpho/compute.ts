@@ -1,5 +1,6 @@
 import type { CuratorConfig, MorphoMarketMetrics } from './types';
 import type { Market } from '@morpho-org/blue-api-sdk';
+import { resolveMarketId } from './market-id';
 import { logger } from '@/lib/utils/logger';
 
 // Constants for TVL-based tolerance scaling
@@ -66,10 +67,12 @@ export function computeMetricsForMarket(
   }
   utilizationScore = normalize01(utilizationScore);
 
+  const marketKey = resolveMarketId(market as { marketId?: string | null; id?: string | null });
+
   // Runtime sanity check for utilization anomalies
   if (utilization > maxUtilizationBeyond + 0.05) {
     logger.warn('Utilization anomaly detected', {
-      marketId: market.id,
+      marketId: marketKey,
       utilization,
       maxUtilizationBeyond,
       threshold: maxUtilizationBeyond + 0.05,
@@ -239,7 +242,7 @@ export function computeMetricsForMarket(
   // Log diagnostic info for markets with null ratings to help debug
   if (insufficientTvl) {
     logger.debug('Market has insufficient TVL for rating', {
-      marketId: market.id,
+      marketId: marketKey,
       symbol: market.loanAsset?.symbol,
       tvlUsd: tvl,
       minTvlUsd,
@@ -250,7 +253,7 @@ export function computeMetricsForMarket(
   }
 
   return {
-    id: market.id,
+    id: marketKey,
     symbol: market.loanAsset?.symbol ?? 'UNKNOWN',
     utilization,
     utilizationScore,

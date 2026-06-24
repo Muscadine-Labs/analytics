@@ -7,6 +7,7 @@ import { handleApiError, AppError } from '@/lib/utils/error-handler';
 import { createRateLimitMiddleware, RATE_LIMIT_REQUESTS_PER_MINUTE, MINUTE_MS } from '@/lib/utils/rate-limit';
 import { BASE_CHAIN_ID } from '@/lib/constants';
 import { fetchV1VaultMarkets, type V1VaultMarketData } from '@/lib/morpho/query-v1-vault-markets';
+import { resolveMarketId } from '@/lib/morpho/market-id';
 import {
   computeV1MarketRiskScores,
   isMarketIdle,
@@ -34,7 +35,7 @@ type GraphAdapter = {
     address?: string | null;
     name?: string | null;
     symbol?: string | null;
-    state?: { apy?: number | null; netApy?: number | null; weeklyNetApy?: number | null } | null;
+    state?: { avgNetApyExcludingRewards?: number | null; netApy?: number | null; weeklyNetApy?: number | null } | null;
   } | null;
   positions?: {
     items: Array<{
@@ -83,7 +84,7 @@ type GraphVaultResponse = {
             marketId?: string | null;
             loanAsset?: { symbol?: string | null; decimals?: number | null; address?: string | null } | null;
             collateralAsset?: { symbol?: string | null; decimals?: number | null; address?: string | null } | null;
-            oracleAddress?: string | null;
+            oracle?: { address?: string | null } | null;
             irmAddress?: string | null;
             lltv?: string | number | null;
             state?: {
@@ -208,7 +209,11 @@ const VAULT_V2_RISK_QUERY = gql`
               address
               name
               symbol
-              state { apy netApy weeklyNetApy }
+              state {
+                avgNetApyExcludingRewards
+                netApy
+                weeklyNetApy: avgNetApy(lookback: SEVEN_DAYS)
+              }
             }
           }
           ... on MorphoMarketV1Adapter {
@@ -219,13 +224,11 @@ const VAULT_V2_RISK_QUERY = gql`
                   supplyAssetsUsd
                 }
                 market {
-                  id
                   marketId
+                  chain { id }
                   loanAsset { symbol decimals address }
                   collateralAsset { symbol decimals address }
-                  oracleAddress
                   oracle {
-                    id
                     address
                     type
                     data {
@@ -282,11 +285,13 @@ const VAULT_V2_CAP_MARKETS_QUERY = gql`
             ... on MarketV1CapData {
               adapterAddress
               market {
-                id
                 marketId
+                chain { id }
                 loanAsset { symbol decimals address }
                 collateralAsset { symbol decimals address }
-                oracleAddress
+                oracle {
+                  address
+                }
                 irmAddress
                 lltv
                 state {
@@ -309,11 +314,13 @@ const VAULT_V2_CAP_MARKETS_QUERY = gql`
 
 /** Underlying V1 vault yield for Supply APY column (Morpho state.apy = supply-side vault APY). */
 function pickUnderlyingVaultSupplyApy(state?: {
-  apy?: number | null;
+  avgNetApyExcludingRewards?: number | null;
   netApy?: number | null;
   weeklyNetApy?: number | null;
 } | null): number | null {
-  if (state?.apy != null && Number.isFinite(state.apy)) return state.apy;
+  if (state?.avgNetApyExcludingRewards != null && Number.isFinite(state.avgNetApyExcludingRewards)) {
+    return state.avgNetApyExcludingRewards;
+  }
   if (state?.netApy != null && Number.isFinite(state.netApy)) return state.netApy;
   if (state?.weeklyNetApy != null && Number.isFinite(state.weeklyNetApy)) return state.weeklyNetApy;
   return null;
@@ -346,11 +353,17 @@ function getGradeFromScore(score: number): MarketRiskGrade {
 }
 
 function normalizeAdapterMarket(
-  market: V1VaultMarketData & { marketId?: string }
+  market: V1VaultMarketData & {
+    marketId?: string;
+    oracle?: { address?: string | null } | null;
+  }
 ): V1VaultMarketData {
+  const oracleAddress = market.oracleAddress ?? market.oracle?.address ?? null;
+  const marketKey = resolveMarketId(market);
   return {
     ...market,
-    uniqueKey: market.uniqueKey || market.marketId || market.id,
+    oracleAddress,
+    uniqueKey: market.uniqueKey || marketKey,
     marketTotalSupplyUsd:
       market.marketTotalSupplyUsd ?? market.state?.supplyAssetsUsd ?? null,
   };
@@ -431,19 +444,21 @@ type GraphCapItem = NonNullable<
 
 type GraphCapMarket = NonNullable<
   NonNullable<NonNullable<GraphCapItem>['data']>['market']
->;
+> & {
+  oracle?: { address?: string | null } | null;
+};
 
 function capMarketToV1Data(capMarket: GraphCapMarket | null | undefined): (V1VaultMarketData & { marketId?: string }) | null {
-  if (!capMarket?.marketId && !capMarket?.id) return null;
+  if (!capMarket?.marketId) return null;
 
   const loan = capMarket.loanAsset;
   const collateral = capMarket.collateralAsset;
   if (!loan?.symbol || !collateral?.symbol) return null;
 
-  const marketId = capMarket.marketId ?? capMarket.id ?? '';
+  const marketId = capMarket.marketId;
 
   return {
-    id: capMarket.id ?? marketId,
+    id: marketId,
     uniqueKey: marketId,
     marketId,
     loanAsset: {
@@ -456,7 +471,7 @@ function capMarketToV1Data(capMarket: GraphCapMarket | null | undefined): (V1Vau
       decimals: collateral.decimals ?? 18,
       address: collateral.address ?? '',
     },
-    oracleAddress: capMarket.oracleAddress ?? null,
+    oracleAddress: capMarket.oracle?.address ?? null,
     oracle: null,
     irmAddress: capMarket.irmAddress ?? null,
     lltv: capMarket.lltv != null ? String(capMarket.lltv) : null,
@@ -505,8 +520,7 @@ function isMarketCapForAdapter(cap: GraphCapItem | null | undefined, adapterAddr
 }
 
 function marketRiskKey(market: V1VaultMarketData & { marketId?: string }): string {
-  const key = market.uniqueKey || market.marketId || market.id;
-  return key.toLowerCase();
+  return (market.uniqueKey || resolveMarketId(market)).toLowerCase();
 }
 
 function findAdapterCap(
