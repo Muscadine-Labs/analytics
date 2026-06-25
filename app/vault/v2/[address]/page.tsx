@@ -19,7 +19,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Skeleton } from '@/components/ui/skeleton';
-import { formatTokenAmount } from '@/lib/format/number';
+import { formatTokenAmount, formatCompactUSD } from '@/lib/format/number';
 
 export default function V2VaultPage() {
   const params = useParams();
@@ -27,8 +27,6 @@ export default function V2VaultPage() {
   // Load all data in parallel - hooks will fetch independently
   // Only block on vault data loading (needed for basic info)
   const { vault, risk, governance, vaultIsLoading, isError, error } = useVaultV2Complete(address);
-
-  // Only block on vault data loading (needed for basic info)
   // Other data (risk, governance) will load in parallel via their own hooks
   if (vaultIsLoading) {
     return (
@@ -115,6 +113,42 @@ export default function V2VaultPage() {
     return 'Total Value Locked';
   })();
 
+  const liquiditySubtitle = (() => {
+    const totalAssets = risk?.liquidityBreakdown?.totalAssets;
+    const decimals = risk?.vaultAsset?.decimals ?? vault.assetDecimals;
+    if (totalAssets && decimals != null) {
+      try {
+        const amount = formatTokenAmount(BigInt(totalAssets), decimals, 2);
+        const symbol = risk?.vaultAsset?.symbol ?? vault.asset ?? vault.symbol;
+        return symbol ? `${amount} ${symbol}` : amount;
+      } catch {
+        // ignore invalid totalAssets
+      }
+    }
+    return 'Withdrawable vault liquidity';
+  })();
+
+  const liquidityBreakdownTooltip = risk?.liquidityBreakdown ? (
+    <ul className="space-y-2">
+      <li className="flex items-start justify-between gap-4">
+        <span className="text-muted-foreground shrink-0">Idle</span>
+        <span className="font-medium text-right">{formatCompactUSD(risk.liquidityBreakdown.idleUsd)}</span>
+      </li>
+      <li className="flex items-start justify-between gap-4">
+        <span className="text-muted-foreground shrink-0">Liquidity adapter</span>
+        <span className="font-medium text-right">{formatCompactUSD(risk.liquidityBreakdown.liquidityAdapterUsd)}</span>
+      </li>
+      <li className="flex items-start justify-between gap-4">
+        <span className="text-muted-foreground shrink-0">Force deallocation</span>
+        <span className="font-medium text-right">{formatCompactUSD(risk.liquidityBreakdown.forceDeallocatableUsd)}</span>
+      </li>
+      <li className="flex items-start justify-between gap-4 border-t border-slate-200 pt-2 dark:border-slate-600">
+        <span className="font-medium shrink-0">Total liquidity</span>
+        <span className="font-semibold text-right">{formatCompactUSD(risk.liquidityBreakdown.totalUsd)}</span>
+      </li>
+    </ul>
+  ) : undefined;
+
   return (
     <AppShell
       title="Vault Details"
@@ -181,6 +215,15 @@ export default function V2VaultPage() {
             {/* Metrics Grid */}
             <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
               <KpiCard title="TVL" value={vault.tvl} subtitle={tvlSubtitle} format="usd" />
+              <KpiCard
+                title="Liquidity"
+                value={risk?.liquidityUsd ?? null}
+                subtitle={liquiditySubtitle}
+                format="usd"
+                isLoading={!risk}
+                infoTooltip={liquidityBreakdownTooltip}
+                infoTooltipLabel="Liquidity breakdown"
+              />
               <KpiCard title="APY" value={vault.apy} subtitle="Current yield rate" format="percentage" />
               <KpiCard title="Depositors" value={vault.depositors} subtitle="Total depositors" format="number" />
               <KpiCard 
@@ -191,7 +234,18 @@ export default function V2VaultPage() {
                     ? vault.parameters.performanceFeeBps / 100
                     : null)
                 }
-                subtitle="Curator fee rate" 
+                subtitle="Fee on yield generated" 
+                format="percentage" 
+              />
+              <KpiCard 
+                title="Management Fee" 
+                value={
+                  vault.parameters?.managementFeePercent ??
+                  (vault.parameters?.managementFeeBps != null
+                    ? vault.parameters.managementFeeBps / 100
+                    : null)
+                }
+                subtitle="Annual fee on AUM" 
                 format="percentage" 
               />
             </div>

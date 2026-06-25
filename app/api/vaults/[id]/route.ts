@@ -378,6 +378,8 @@ export async function GET(
           parameters: {
             performanceFeeBps: null,
             performanceFeePercent: null,
+            managementFeeBps: null,
+            managementFeePercent: null,
             maxDeposit: null,
             maxWithdrawal: null,
             strategyNotes: '',
@@ -555,6 +557,10 @@ export async function GET(
       ? (mv?.performanceFee != null ? Math.round(mv.performanceFee * BPS_PER_ONE) : null)
       : (mv?.state?.fee != null ? Math.round(mv.state.fee * BPS_PER_ONE) : null);
 
+    const managementFeeBps = isV2
+      ? (mv?.managementFee != null ? Math.round(mv.managementFee * BPS_PER_ONE) : null)
+      : null;
+
     const result = {
       ...cfg,
       address: address, // Ensure address is explicitly set
@@ -704,6 +710,9 @@ export async function GET(
         performanceFeeBps: performanceFeeBps,
         performanceFeePercent:
           performanceFeeBps != null ? performanceFeeBps / 100 : null,
+        managementFeeBps: managementFeeBps,
+        managementFeePercent:
+          managementFeeBps != null ? managementFeeBps / 100 : null,
         maxDeposit: null,
         maxWithdrawal: null,
         strategyNotes: '',

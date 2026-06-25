@@ -34,6 +34,22 @@ function scalePercent(value: number | null | undefined): number | null {
   return value * 100;
 }
 
+function formatAllocatedToken(
+  allocationAssets: string | null,
+  allocatedUsd: number,
+  decimals: number,
+  symbol: string | null
+): string {
+  if (allocationAssets != null) {
+    const amount = `${formatTokenAmount(BigInt(allocationAssets), decimals, 2)} ${symbol ?? ''}`.trim();
+    return amount;
+  }
+  if (allocatedUsd === 0) {
+    return `${formatTokenAmount(0n, decimals, 2)} ${symbol ?? ''}`.trim();
+  }
+  return '—';
+}
+
 type AdapterRow = {
   isAdapterRow: true;
   market: string;
@@ -294,9 +310,12 @@ export function VaultV2Allocations({ vaultAddress, preloadedRisk }: VaultV2Alloc
                     <TableCell className="text-right">
                       <div className="flex flex-col items-end gap-0.5">
                         <span>
-                          {r.allocationAssets != null
-                            ? `${formatTokenAmount(BigInt(r.allocationAssets), r.allocationTokenDecimals, 2)} ${r.allocationTokenSymbol ?? ''}`.trim()
-                            : '—'}
+                          {formatAllocatedToken(
+                            r.allocationAssets,
+                            r.allocated,
+                            r.allocationTokenDecimals,
+                            r.allocationTokenSymbol
+                          )}
                         </span>
                         <span className="text-muted-foreground text-xs">
                           {formatCompactUSD(r.allocated)}
@@ -345,9 +364,12 @@ export function VaultV2Allocations({ vaultAddress, preloadedRisk }: VaultV2Alloc
                     <TableCell className="text-right">
                       <div className="flex flex-col items-end gap-0.5">
                         <span>
-                          {r.allocationAssets != null
-                            ? `${formatTokenAmount(BigInt(r.allocationAssets), r.allocationTokenDecimals, 2)} ${r.allocationTokenSymbol ?? ''}`.trim()
-                            : '—'}
+                          {formatAllocatedToken(
+                            r.allocationAssets,
+                            r.allocated,
+                            r.allocationTokenDecimals,
+                            r.allocationTokenSymbol
+                          )}
                         </span>
                         <span className="text-muted-foreground text-xs">
                           {formatCompactUSD(r.allocated)}

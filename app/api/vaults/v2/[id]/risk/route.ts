@@ -59,7 +59,10 @@ type GraphVaultResponse = {
     avgNetApy?: number | null;
     idleAssets?: string | number | null;
     idleAssetsUsd?: number | null;
+    liquidity?: string | number | null;
     liquidityUsd?: number | null;
+    forceDeallocatableLiquidity?: string | number | null;
+    forceDeallocatableLiquidityUsd?: number | null;
     asset?: { symbol?: string; decimals?: number } | null;
     liquidityAdapter?: { address?: string | null } | null;
     liquidityData?: {
@@ -156,6 +159,15 @@ export type V2IdleAllocation = {
   assets: string | null;
 };
 
+export type V2LiquidityBreakdown = {
+  idleUsd: number;
+  liquidityAdapterUsd: number;
+  forceDeallocatableUsd: number;
+  totalUsd: number;
+  /** Total withdrawable liquidity in vault asset smallest units. */
+  totalAssets: string | null;
+};
+
 export type V2VaultRiskResponse = {
   vaultAddress: string;
   totalAdapterAssetsUsd: number;
@@ -167,6 +179,9 @@ export type V2VaultRiskResponse = {
   liquidityMarket: V2LiquidityMarket | null;
   /** Assets held in the vault contract, not deployed to any adapter */
   idle: V2IdleAllocation;
+  /** Withdrawable liquidity (idle + liquidity adapter + force deallocation). */
+  liquidityUsd: number | null;
+  liquidityBreakdown: V2LiquidityBreakdown | null;
   adapters: V2AdapterRiskData[];
   /** V2 vault net APY (0–1). */
   vaultNetApy?: number | null;
@@ -184,7 +199,10 @@ const VAULT_V2_RISK_QUERY = gql`
       avgNetApy
       idleAssets
       idleAssetsUsd
+      liquidity
       liquidityUsd
+      forceDeallocatableLiquidity
+      forceDeallocatableLiquidityUsd
       asset { symbol decimals }
       liquidityAdapter { address }
       liquidityData {
@@ -825,6 +843,31 @@ export async function GET(
     const idleAssets =
       data.vault.idleAssets != null ? String(data.vault.idleAssets) : null;
 
+    const baseLiquidityUsd = data.vault.liquidityUsd;
+    const forceDeallocatableLiquidityUsd = data.vault.forceDeallocatableLiquidityUsd;
+    const liquidityUsd =
+      baseLiquidityUsd == null && forceDeallocatableLiquidityUsd == null
+        ? null
+        : (baseLiquidityUsd ?? 0) + (forceDeallocatableLiquidityUsd ?? 0);
+
+    const baseLiquidity = data.vault.liquidity;
+    const forceDeallocatableLiquidity = data.vault.forceDeallocatableLiquidity;
+    const totalLiquidityAssets =
+      baseLiquidity == null && forceDeallocatableLiquidity == null
+        ? null
+        : String(BigInt(baseLiquidity ?? 0) + BigInt(forceDeallocatableLiquidity ?? 0));
+
+    const liquidityBreakdown: V2LiquidityBreakdown | null =
+      liquidityUsd == null
+        ? null
+        : {
+            idleUsd: idleAssetsUsd,
+            liquidityAdapterUsd: Math.max(0, (baseLiquidityUsd ?? 0) - idleAssetsUsd),
+            forceDeallocatableUsd: forceDeallocatableLiquidityUsd ?? 0,
+            totalUsd: liquidityUsd,
+            totalAssets: totalLiquidityAssets,
+          };
+
     const response: V2VaultRiskResponse = {
       vaultAddress: address,
       totalAdapterAssetsUsd,
@@ -837,6 +880,8 @@ export async function GET(
         assetsUsd: idleAssetsUsd,
         assets: idleAssets,
       },
+      liquidityUsd,
+      liquidityBreakdown,
       vaultNetApy: data.vault.avgNetApy ?? null,
       adapters: adapterRisks,
     };

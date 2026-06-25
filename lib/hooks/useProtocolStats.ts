@@ -125,6 +125,8 @@ export interface VaultDetail extends VaultWithData {
   parameters: {
     performanceFeeBps: number;
     performanceFeePercent?: number | null;
+    managementFeeBps?: number | null;
+    managementFeePercent?: number | null;
     maxDeposit: number | null;
     maxWithdrawal: number | null;
     strategyNotes: string;

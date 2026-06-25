@@ -1,5 +1,6 @@
 import { cn } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { KpiInfoTooltip } from '@/components/KpiInfoTooltip';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatCompactUSD, formatCompactNumber, formatPercentage, formatUSD } from '@/lib/format/number';
 
@@ -14,6 +15,8 @@ interface KpiCardProps {
   isLoading?: boolean;
   format?: 'usd' | 'usd_full' | 'number' | 'percentage' | 'raw';
   compact?: boolean;
+  infoTooltip?: React.ReactNode;
+  infoTooltipLabel?: string;
 }
 
 export function KpiCard({
@@ -24,6 +27,8 @@ export function KpiCard({
   isLoading = false,
   format = 'usd',
   compact = false,
+  infoTooltip,
+  infoTooltipLabel = 'More information',
 }: KpiCardProps) {
   const formatValue = (val: number | string | null) => {
     if (val === null || val === undefined) return 'N/A';
@@ -78,7 +83,12 @@ export function KpiCard({
         )}
       >
         <CardTitle className={compact ? 'text-xs font-medium' : 'text-sm font-medium'}>
-          {title}
+          <span className="inline-flex items-center gap-1">
+            {title}
+            {infoTooltip && (
+              <KpiInfoTooltip label={infoTooltipLabel}>{infoTooltip}</KpiInfoTooltip>
+            )}
+          </span>
         </CardTitle>
         {trend && (
           <div
