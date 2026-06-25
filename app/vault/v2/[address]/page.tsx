@@ -185,7 +185,12 @@ export default function V2VaultPage() {
               <KpiCard title="Depositors" value={vault.depositors} subtitle="Total depositors" format="number" />
               <KpiCard 
                 title="Performance Fee" 
-                value={vault.parameters?.performanceFeePercent ?? (vault.parameters?.performanceFeeBps ? vault.parameters.performanceFeeBps / 100 : null)} 
+                value={
+                  vault.parameters?.performanceFeePercent ??
+                  (vault.parameters?.performanceFeeBps != null
+                    ? vault.parameters.performanceFeeBps / 100
+                    : null)
+                }
                 subtitle="Curator fee rate" 
                 format="percentage" 
               />

@@ -552,8 +552,8 @@ export async function GET(
     
     // Get performance fee from Morpho API (decimal like 0.05 = 5%)
     const performanceFeeBps = isV2
-      ? (mv?.performanceFee ? Math.round(mv.performanceFee * BPS_PER_ONE) : null)
-      : (mv?.state?.fee ? Math.round(mv.state.fee * BPS_PER_ONE) : null);
+      ? (mv?.performanceFee != null ? Math.round(mv.performanceFee * BPS_PER_ONE) : null)
+      : (mv?.state?.fee != null ? Math.round(mv.state.fee * BPS_PER_ONE) : null);
 
     const result = {
       ...cfg,
@@ -702,7 +702,8 @@ export async function GET(
       })),
       parameters: {
         performanceFeeBps: performanceFeeBps,
-        performanceFeePercent: performanceFeeBps ? performanceFeeBps / 100 : null,
+        performanceFeePercent:
+          performanceFeeBps != null ? performanceFeeBps / 100 : null,
         maxDeposit: null,
         maxWithdrawal: null,
         strategyNotes: '',
