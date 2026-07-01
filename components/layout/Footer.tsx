@@ -1,11 +1,11 @@
 import Link from 'next/link';
 
 const FOOTER_LINKS = [
-  { label: 'Contact', href: 'https://muscadine.io/contact' },
-  { label: 'Website', href: 'https://muscadine.io' },
-  { label: 'Terms of Service', href: 'https://muscadine.io/terms' },
-  { label: 'Privacy Policy', href: 'https://muscadine.io/privacy' },
-  { label: 'Legal Disclaimer', href: 'https://muscadine.io/legal' },
+  { label: 'Contact', href: 'https://muscadine.xyz/contact' },
+  { label: 'Website', href: 'https://muscadine.xyz' },
+  { label: 'Terms of Service', href: 'https://muscadine.xyz/terms' },
+  { label: 'Privacy Policy', href: 'https://muscadine.xyz/privacy' },
+  { label: 'Legal Disclaimer', href: 'https://muscadine.xyz/legal' },
 ];
 
 export function Footer() {
@@ -27,7 +27,7 @@ export function Footer() {
         </div>
         <p className="text-center text-sm text-slate-500 dark:text-slate-400 sm:text-right">
           <Link
-            href="https://muscadine.io"
+            href="https://muscadine.xyz"
             target="_blank"
             rel="noopener noreferrer"
             className="hover:text-slate-700 hover:underline dark:hover:text-slate-300"
