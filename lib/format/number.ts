@@ -1,9 +1,10 @@
 // Format USD amounts
 export const formatUSD = (amount: number | bigint | null, decimals: number = 2): string => {
-  if (!amount) return '$0.00';
-  
+  if (amount === null || amount === undefined) return '—';
+
   const numAmount = typeof amount === 'bigint' ? Number(amount) : amount;
-  
+  if (!Number.isFinite(numAmount)) return '—';
+
   if (numAmount === 0) return '$0.00';
   // Only show <$0.01 for positive values between 0 and 0.01
   if (numAmount > 0 && numAmount < 0.01) return '<$0.01';
@@ -20,10 +21,11 @@ export const formatUSD = (amount: number | bigint | null, decimals: number = 2):
 
 // Format compact USD amounts (K, M, B)
 export const formatCompactUSD = (amount: number | bigint | null): string => {
-  if (!amount) return '$0.00';
-  
+  if (amount === null || amount === undefined) return '—';
+
   const numAmount = typeof amount === 'bigint' ? Number(amount) : amount;
-  
+  if (!Number.isFinite(numAmount)) return '—';
+
   if (numAmount === 0) return '$0.00';
   if (numAmount < 1000) return formatUSD(numAmount, 2);
   
@@ -40,7 +42,7 @@ export const formatCompactUSD = (amount: number | bigint | null): string => {
 
 // Format percentage
 export const formatPercentage = (value: number | null, decimals: number = 2): string => {
-  if (value === null || value === undefined) return '0.00%';
+  if (value === null || value === undefined) return '—';
   
   return new Intl.NumberFormat('en-US', {
     style: 'percent',
@@ -51,18 +53,20 @@ export const formatPercentage = (value: number | null, decimals: number = 2): st
 
 // Format large numbers with commas
 export const formatNumber = (value: number | bigint | null): string => {
-  if (!value) return '0';
-  
+  if (value === null || value === undefined) return '—';
+
   const numValue = typeof value === 'bigint' ? Number(value) : value;
+  if (!Number.isFinite(numValue)) return '—';
   
   return new Intl.NumberFormat('en-US').format(numValue);
 };
 
 // Format compact numbers (K, M, B)
 export const formatCompactNumber = (value: number | bigint | null): string => {
-  if (!value) return '0';
-  
+  if (value === null || value === undefined) return '—';
+
   const numValue = typeof value === 'bigint' ? Number(value) : value;
+  if (!Number.isFinite(numValue)) return '—';
   
   if (numValue < 1000) return numValue.toString();
   
@@ -109,4 +113,60 @@ export const formatTokenAmount = (
     minimumFractionDigits: displayDecimals,
     maximumFractionDigits: displayDecimals,
   }).format(formatted);
+};
+
+/** Parse Morpho raw token amounts from API strings or JSON numbers. */
+export function parseRawTokenAmount(
+  value: string | number | bigint | null | undefined
+): bigint | null {
+  if (value == null) return null;
+  if (typeof value === 'bigint') return value;
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return null;
+    return BigInt(Math.trunc(value));
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  const integerPart = trimmed.split('.')[0] ?? '';
+  if (/^-?\d+$/.test(integerPart)) {
+    try {
+      return BigInt(integerPart);
+    } catch {
+      return null;
+    }
+  }
+
+  try {
+    return BigInt(trimmed);
+  } catch {
+    return null;
+  }
+}
+
+/** Format raw token units with bigint-safe precision. */
+export const formatRawTokenAmount = (
+  raw: bigint | string | number | null | undefined,
+  decimals: number,
+  displayDecimals: number = 2
+): string => {
+  const value = typeof raw === 'bigint' ? raw : parseRawTokenAmount(raw);
+  if (value == null || value === 0n || decimals < 0) {
+    return (0).toLocaleString('en-US', {
+      minimumFractionDigits: displayDecimals,
+      maximumFractionDigits: displayDecimals,
+    });
+  }
+
+  const negative = value < 0n;
+  const abs = negative ? -value : value;
+  const base = 10n ** BigInt(decimals);
+  const whole = abs / base;
+  const frac = abs % base;
+  const wholeStr = whole.toLocaleString('en-US');
+  const fracPadded = frac.toString().padStart(decimals, '0');
+  const fracTrimmed = fracPadded.slice(0, displayDecimals).padEnd(displayDecimals, '0');
+  const out = `${wholeStr}.${fracTrimmed}`;
+  return negative ? `-${out}` : out;
 };

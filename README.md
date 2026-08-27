@@ -14,12 +14,13 @@ Open http://localhost:3000
 
 ## Environment Variables
 
-Copy `.env.example` → `.env.local`. No variables are strictly required (demo RPC works locally).
+Copy `.env.example` → `.env.local`. Set `ALCHEMY_API_KEY` for oracle freshness, IRM utilization, and timelock reads. Morpho GraphQL needs no key.
+
+Requires **Node.js 24+** (Active LTS).
 
 | Variable | Required? | Purpose |
 |----------|-----------|---------|
-| `ALCHEMY_API_KEY` | No (recommended) | Server-side Base RPC |
-| `NEXT_PUBLIC_ALCHEMY_API_KEY` | No (recommended) | Client-side Base RPC |
+| `ALCHEMY_API_KEY` | Recommended | Default Base RPC for oracles, utilization/IRM, and timelocks |
 | `COINBASE_CDP_API_KEY` | No | Alternative server RPC |
 | `MORPHO_API_URL` | No | Morpho GraphQL override |
 | `NEXT_PUBLIC_VAULT_*` | No | Vault address overrides |

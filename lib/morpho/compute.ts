@@ -1,5 +1,4 @@
-import type { CuratorConfig, MorphoMarketMetrics } from './types';
-import type { Market } from '@morpho-org/blue-api-sdk';
+import type { CuratorConfig, MorphoMarketMetrics, MorphoMarketRaw } from './types';
 import { resolveMarketId } from './market-id';
 import { logger } from '@/lib/utils/logger';
 
@@ -11,9 +10,9 @@ import { logger } from '@/lib/utils/logger';
 // This prevents large, liquid markets from being unfairly penalized
 // Steakhouse upstream playbook emphasizes automated rebalancing, allowing for more lenient stress tolerance
 const LARGE_MARKET_THRESHOLD = 50_000_000; // $50M - markets above this get special handling
-const LARGE_MARKET_MAX_TOLERANCE = 0.40; // 40% for very large markets ($2B+) - increased from 35%
-const VERY_LARGE_MARKET_THRESHOLD = 100_000_000; // $100M
-const ULTRA_LARGE_MARKET_THRESHOLD = 500_000_000; // $500M - more aggressive scaling for very large markets
+const LARGE_MARKET_MAX_TOLERANCE = 0.40; // 40% for very large markets ($2B+)
+const ULTRA_LARGE_MARKET_THRESHOLD = 500_000_000; // $500M
+const ULTRA_LARGE_SCALE_TVL = 2_000_000_000; // $2B — top of ultra-large tolerance scale
 
 /**
  * Clamps a value to [0, 1] range
@@ -33,7 +32,7 @@ export function normalize01(value: number): number {
 }
 
 export function computeMetricsForMarket(
-  market: Market,
+  market: MorphoMarketRaw,
   config: CuratorConfig,
   benchmarkSupplyRate?: number
 ): MorphoMarketMetrics {
@@ -97,10 +96,9 @@ export function computeMetricsForMarket(
 
   // Stress model safety with clamped config values
   const priceStressPct = clamp01(config.priceStressPct);
-  const collateralAfterShock = Math.max(
-    supplied * (1 - priceStressPct),
-    0
-  );
+  const collateralUsd = Math.max(state?.collateralAssetsUsd ?? 0, 0);
+  const shockBase = collateralUsd > 0 ? collateralUsd : supplied;
+  const collateralAfterShock = Math.max(shockBase * (1 - priceStressPct), 0);
   const potentialInsolvencyUsd = Math.max(0, borrowed - collateralAfterShock);
   const insolvencyPctOfTvl = tvl > 0 ? potentialInsolvencyUsd / tvl : 1;
 
@@ -124,7 +122,10 @@ export function computeMetricsForMarket(
       // For $500M+ markets, use a more lenient tolerance that scales with size
       // Base tolerance of 25% for $500M, scaling to 40% for $2B+ (increased from 20-35%)
       // This allows large markets with 20-25% exposure to score reasonably
-      const ultraLargeScale = Math.min(1, (tvl - ULTRA_LARGE_MARKET_THRESHOLD) / (VERY_LARGE_MARKET_THRESHOLD - ULTRA_LARGE_MARKET_THRESHOLD));
+      const ultraLargeScale = Math.min(
+        1,
+        (tvl - ULTRA_LARGE_MARKET_THRESHOLD) / (ULTRA_LARGE_SCALE_TVL - ULTRA_LARGE_MARKET_THRESHOLD)
+      );
       const ultraLargeBaseTolerance = 0.25; // 25% base for $500M markets (increased from 20%)
       insolvencyTolerancePctTvl = ultraLargeBaseTolerance + (LARGE_MARKET_MAX_TOLERANCE - ultraLargeBaseTolerance) * ultraLargeScale; // Scale to 40% at $2B+ (increased from 35%)
       insolvencyTolerancePctTvl = clamp01(insolvencyTolerancePctTvl);

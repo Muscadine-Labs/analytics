@@ -93,9 +93,10 @@ export function createRateLimitMiddleware(
 ) {
   return (request: Request): { allowed: boolean; headers?: Headers } => {
     // Try to get IP from various headers (for production, use a proper IP extraction)
-    const forwarded = request.headers.get('x-forwarded-for');
-    const realIp = request.headers.get('x-real-ip');
-    const identifier = forwarded?.split(',')[0] || realIp || 'unknown';
+    const identifier =
+      request.headers.get('x-vercel-forwarded-for')?.split(',')[0]?.trim() ||
+      request.headers.get('x-real-ip')?.trim() ||
+      'unknown';
 
     const allowed = rateLimit(identifier, maxRequests, windowMs);
 

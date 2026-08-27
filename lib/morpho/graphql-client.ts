@@ -1,6 +1,6 @@
 /**
  * GraphQL Client for Morpho API
- * Uses graphql-request with SDK-generated types for type safety
+ * Uses graphql-request against Morpho's public GraphQL API
  */
 import { request, type RequestDocument } from 'graphql-request';
 import { MORPHO_GRAPHQL_ENDPOINT } from '@/lib/constants';

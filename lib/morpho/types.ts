@@ -1,10 +1,20 @@
-import type { Market } from '@morpho-org/blue-api-sdk';
-
-/**
- * Use SDK Market type directly for type safety
- * This ensures our types stay in sync with Morpho's GraphQL schema
- */
-export type MorphoMarketRaw = Market;
+export type MorphoMarketRaw = {
+  marketId?: string | null;
+  id?: string | null;
+  chain?: { id?: number | null } | null;
+  loanAsset?: { symbol?: string | null; decimals?: number | null } | null;
+  collateralAsset?: { symbol?: string | null; decimals?: number | null } | null;
+  state?: {
+    supplyAssetsUsd?: number | null;
+    borrowAssetsUsd?: number | null;
+    collateralAssetsUsd?: number | null;
+    liquidityAssetsUsd?: number | null;
+    sizeUsd?: number | null;
+    supplyApy?: number | null;
+    borrowApy?: number | null;
+    utilization?: number | null;
+  } | null;
+};
 
 export type CuratorWeights = {
   utilization: number;
@@ -62,4 +72,3 @@ export type MorphoMarketsResponse = {
   timestamp: string;
   markets: MorphoMarketMetrics[];
 };
-

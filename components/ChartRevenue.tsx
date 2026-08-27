@@ -123,7 +123,12 @@ export function ChartRevenue({
                 if (isNaN(numValue)) return ['N/A', label];
                 return [formatTooltipValue(numValue), label];
               }}
-              labelFormatter={(label) => new Date(label).toLocaleDateString()}
+              labelFormatter={(label) => {
+                if (typeof label === 'string' || typeof label === 'number') {
+                  return new Date(label).toLocaleDateString();
+                }
+                return String(label ?? '');
+              }}
             />
             <Line 
               type="monotone" 

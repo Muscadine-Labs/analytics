@@ -39,30 +39,23 @@ export const BPS_PER_ONE = 10000;
 export const GRAPHQL_FIRST_LIMIT = 1000;
 export const GRAPHQL_TRANSACTIONS_LIMIT = 10;
 
-// Time Constants (in milliseconds)
-export const MILLISECONDS_PER_SECOND = 1000;
-export const SECONDS_PER_MINUTE = 60;
-export const MINUTES_PER_HOUR = 60;
-export const HOURS_PER_DAY = 24;
-
-export const SECOND_MS = MILLISECONDS_PER_SECOND;
-export const MINUTE_MS = SECOND_MS * SECONDS_PER_MINUTE;
-export const HOUR_MS = MINUTE_MS * MINUTES_PER_HOUR;
-export const DAY_MS = HOUR_MS * HOURS_PER_DAY;
-
-// Common time periods
-export const DAYS_30_MS = 30 * DAY_MS;
+export const MINUTE_MS = 60_000;
 
 // API Configuration
 export const MORPHO_GRAPHQL_ENDPOINT = 'https://api.morpho.org/graphql';
+
+export function getMorphoMarketUrl(chainId: number, marketId: string): string {
+  const network = chainId === ETHEREUM_CHAIN_ID ? 'ethereum' : 'base';
+  return `https://app.morpho.org/${network}/market/${marketId}`;
+}
+
+export function getMorphoVaultUrl(chainId: number, vaultAddress: string): string {
+  const network = chainId === ETHEREUM_CHAIN_ID ? 'ethereum' : 'base';
+  return `https://app.morpho.org/${network}/vault/${vaultAddress.toLowerCase()}`;
+}
 
 // Request Timeouts
 export const EXTERNAL_API_TIMEOUT_MS = 60000; // 60 seconds
 
 // Rate Limiting
 export const RATE_LIMIT_REQUESTS_PER_MINUTE = 60;
-
-// Helper functions
-export const getDaysAgoTimestamp = (days: number): number => {
-  return Math.floor((Date.now() - days * DAY_MS) / MILLISECONDS_PER_SECOND);
-};

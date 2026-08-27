@@ -56,7 +56,7 @@ export default function Home() {
           />
           <KpiCard
             title="Total Fees Generated"
-            value={stats?.totalInterestGenerated || 0}
+            value={stats?.totalFeesGenerated || 0}
             subtitle="Total fees collected to token holders"
             isLoading={isLoading}
             format="usd"
@@ -64,7 +64,7 @@ export default function Home() {
           />
           <KpiCard
             title="Total Revenue Generated"
-            value={stats?.totalFeesGenerated ?? 0}
+            value={stats?.totalRevenueGenerated ?? 0}
             subtitle="Total revenue to protocol"
             isLoading={isLoading}
             format="usd"

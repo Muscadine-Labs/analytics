@@ -8,12 +8,13 @@ async function fetchVaultV2Governance(vaultAddress: string): Promise<VaultV2Gove
 
   if (!res.ok) {
     const text = await res.text();
+    let json: { message?: string; error?: string } | null = null;
     try {
-      const json = JSON.parse(text);
-      throw new Error(json.message || json.error || 'Failed to fetch vault governance data');
+      json = JSON.parse(text);
     } catch {
-      throw new Error(text || 'Failed to fetch vault governance data');
+      json = null;
     }
+    throw new Error(json?.message || json?.error || text || 'Failed to fetch vault governance data');
   }
 
   return res.json();

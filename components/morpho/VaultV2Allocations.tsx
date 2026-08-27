@@ -14,7 +14,11 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { useVaultV2Risk } from '@/lib/hooks/useVaultV2Risk';
-import { formatCompactUSD, formatPercentage, formatLtv, formatTokenAmount } from '@/lib/format/number';
+import { BASE_CHAIN_ID, getMorphoMarketUrl, getMorphoVaultUrl } from '@/lib/constants';
+import { getVaultByAddress } from '@/lib/config/vaults';
+import { formatCompactUSD, formatPercentage, formatLtv, formatRawTokenAmount, parseRawTokenAmount } from '@/lib/format/number';
+import { getTokenDisplayDecimals, resolveAssetDecimals } from '@/lib/format/asset-decimals';
+import { resolveMarketId } from '@/lib/morpho/market-id';
 import { shouldShowMarketEntry } from '@/lib/morpho/format-risk';
 import type { V2VaultRiskResponse } from '@/app/api/vaults/v2/[id]/risk/route';
 
@@ -23,56 +27,69 @@ interface VaultV2AllocationsProps {
   preloadedRisk?: V2VaultRiskResponse | null;
 }
 
-/** formatPercentage expects value in 0–100 (e.g. 4 for 4%). APY/util from Morpho are 0–1, so pass v*100. */
 function formatOrDash(value: number | null | undefined): string {
   return value != null && Number.isFinite(value) ? formatPercentage(value, 2) : '—';
 }
 
-/** APY and utilization from Morpho state are 0–1; convert to 0–100 for formatPercentage. */
 function scalePercent(value: number | null | undefined): number | null {
   if (value == null || !Number.isFinite(value)) return null;
   return value * 100;
 }
 
 function formatAllocatedToken(
-  allocationAssets: string | null,
+  allocationAssets: string | number | null,
   allocatedUsd: number,
   decimals: number,
   symbol: string | null
 ): string {
-  if (allocationAssets != null) {
-    const amount = `${formatTokenAmount(BigInt(allocationAssets), decimals, 2)} ${symbol ?? ''}`.trim();
-    return amount;
+  const chainDecimals = resolveAssetDecimals(symbol, decimals);
+  const displayDecimals = getTokenDisplayDecimals(symbol, chainDecimals);
+  const raw = parseRawTokenAmount(allocationAssets);
+
+  if (raw != null) {
+    const amount = formatRawTokenAmount(raw, chainDecimals, displayDecimals);
+    return symbol ? `${amount} ${symbol}` : amount;
   }
+
   if (allocatedUsd === 0) {
-    return `${formatTokenAmount(0n, decimals, 2)} ${symbol ?? ''}`.trim();
+    const amount = formatRawTokenAmount(0n, chainDecimals, displayDecimals);
+    return symbol ? `${amount} ${symbol}` : amount;
   }
+
   return '—';
 }
 
-type AdapterRow = {
-  isAdapterRow: true;
+type IdleRow = {
+  kind: 'idle';
+  allocated: number;
+  pct: number;
+  allocationAssets: string | number | null;
+  decimals: number;
+  symbol: string | null;
+};
+
+type VaultAdapterRow = {
+  kind: 'vault';
   market: string;
-  isIdle: boolean;
-  isLiquidityAdapter: boolean;
-  isVaultAdapter: boolean;
-  isIdleVaultAssets: boolean;
+  morphoHref: string | null;
   allocated: number;
   pct: number;
   supplyApy: number | null;
-  liquidity: number | null;
-  allocationAssets: string | null;
-  allocationTokenDecimals: number;
-  allocationTokenSymbol: string | null;
+  allocationAssets: string | number | null;
+  decimals: number;
+  symbol: string | null;
+  isLiquidityAdapter: boolean;
 };
+
 type MarketRow = {
-  isAdapterRow?: false;
+  kind: 'market';
   rowKey: string;
   market: string;
+  morphoHref: string | null;
   lltv: string | number | null;
-  allocationAssets: string | null;
-  allocationTokenDecimals: number;
-  allocationTokenSymbol: string | null;
+  allocationAssets: string | number | null;
+  decimals: number;
+  symbol: string | null;
   utilization: number | null;
   liquidity: number | null;
   borrowApy: number | null;
@@ -81,119 +98,181 @@ type MarketRow = {
   pct: number;
   isLiquidityMarket?: boolean;
 };
-type TableRow = AdapterRow | MarketRow;
 
-function isAdapterRow(r: TableRow): r is AdapterRow {
-  return 'isAdapterRow' in r && r.isAdapterRow === true;
+type TableRow = IdleRow | VaultAdapterRow | MarketRow;
+
+function MorphoNameLink({
+  href,
+  children,
+}: {
+  href: string | null;
+  children: string;
+}) {
+  if (!href) {
+    return <span className="font-medium">{children}</span>;
+  }
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      className="font-medium hover:underline"
+    >
+      {children}
+    </a>
+  );
 }
 
 function marketIdKey(
   market: { uniqueKey?: string | null; marketId?: string | null; id?: string | null } | null | undefined
 ): string | null {
   if (!market) return null;
-  const key = market.uniqueKey ?? market.marketId ?? market.id;
+  const key = market.uniqueKey ?? resolveMarketId(market);
   return key ? key.toLowerCase() : null;
 }
 
-function pushMarketRows(
-  rows: TableRow[],
-  markets: NonNullable<V2VaultRiskResponse['adapters']>[number]['markets'],
-  totalUsd: number,
-  adapterLabel: string,
-  liquidityMarketId: string | null
-): void {
-  const sortedMarkets = (markets ?? [])
-    .slice()
-    .sort((a, b) => (b.allocationUsd ?? 0) - (a.allocationUsd ?? 0));
+function AllocatedCell({
+  allocationAssets,
+  allocated,
+  decimals,
+  symbol,
+}: {
+  allocationAssets: string | number | null;
+  allocated: number;
+  decimals: number;
+  symbol: string | null;
+}) {
+  return (
+    <div className="flex flex-col items-end gap-0.5">
+      <span>
+        {formatAllocatedToken(allocationAssets, allocated, decimals, symbol)}
+      </span>
+      <span className="text-muted-foreground text-xs">
+        {formatCompactUSD(allocated)}
+      </span>
+    </div>
+  );
+}
 
-  for (const m of sortedMarkets) {
-    if (
-      !shouldShowMarketEntry(
-        m.allocationUsd,
-        m.allocationAssets,
-        m.absoluteCap,
-        m.relativeCap
-      )
-    ) {
-      continue;
-    }
-
-    const col = m.market?.collateralAsset?.symbol;
-    const loan = m.market?.loanAsset?.symbol;
-    const marketLabel =
-      col && loan ? `${col}/${loan}` : loan || col || adapterLabel || 'Market';
-    const rowMarketId = marketIdKey(m.market);
-    const isLiquidityMarket =
-      liquidityMarketId != null &&
-      rowMarketId != null &&
-      rowMarketId === liquidityMarketId;
-
-    rows.push({
-      rowKey: rowMarketId ?? `${marketLabel}-${rows.length}`,
-      market: marketLabel,
-      lltv: m.market?.lltv ?? null,
-      allocationAssets: m.allocationAssets ?? null,
-      allocationTokenDecimals: m.market?.loanAsset?.decimals ?? 18,
-      allocationTokenSymbol: m.market?.loanAsset?.symbol ?? null,
-      utilization: m.market?.state?.utilization ?? null,
-      liquidity: m.market?.state?.liquidityAssetsUsd ?? null,
-      borrowApy: m.market?.state?.borrowApy ?? null,
-      supplyApy: m.market?.state?.supplyApy ?? null,
-      allocated: m.allocationUsd ?? 0,
-      pct: totalUsd > 0 ? ((m.allocationUsd ?? 0) / totalUsd) * 100 : 0,
-      isLiquidityMarket,
-    });
-  }
+function SectionHeader({ title, colSpan }: { title: string; colSpan: number }) {
+  return (
+    <TableRow className="hover:bg-transparent">
+      <TableCell
+        colSpan={colSpan}
+        className="bg-muted/30 py-2 text-xs font-medium text-muted-foreground"
+      >
+        {title}
+      </TableCell>
+    </TableRow>
+  );
 }
 
 export function VaultV2Allocations({ vaultAddress, preloadedRisk }: VaultV2AllocationsProps) {
   const { data: fetchedRisk, isLoading, error } = useVaultV2Risk(vaultAddress);
   const risk = preloadedRisk ?? fetchedRisk;
 
-  const { rows, total } = useMemo(() => {
-    if (!risk?.adapters) return { rows: [] as TableRow[], total: 0 };
-
-    const totalUsd = risk.totalAdapterAssetsUsd ?? 0;
-    const vaultAsset = risk.vaultAsset ?? null;
-    const liquidityMarketId = risk.liquidityMarket?.marketId?.toLowerCase() ?? null;
-    const adapterList = (risk.adapters ?? [])
-      .filter((a) => a.adapterType !== 'MetaMorphoAdapter')
-      .slice()
-      .sort((a, b) => (b.allocationUsd ?? 0) - (a.allocationUsd ?? 0));
-
-    const rows: TableRow[] = [];
-
-    for (const adapter of adapterList) {
-      pushMarketRows(
-        rows,
-        adapter.markets ?? [],
-        totalUsd,
-        adapter.adapterLabel,
-        liquidityMarketId
-      );
+  const { idleRow, vaultRows, marketRows, total } = useMemo(() => {
+    if (!risk) {
+      return {
+        idleRow: null as IdleRow | null,
+        vaultRows: [] as VaultAdapterRow[],
+        marketRows: [] as MarketRow[],
+        total: 0,
+      };
     }
 
     const idleUsd = risk.idle?.assetsUsd ?? 0;
-    if (idleUsd > 0) {
-      rows.push({
-        isAdapterRow: true,
-        market: 'Idle',
-        isIdle: true,
-        isLiquidityAdapter: false,
-        isVaultAdapter: false,
-        isIdleVaultAssets: true,
-        allocated: idleUsd,
-        pct: totalUsd > 0 ? (idleUsd / totalUsd) * 100 : 0,
-        supplyApy: null,
-        liquidity: null,
-        allocationAssets: risk.idle?.assets ?? null,
-        allocationTokenDecimals: vaultAsset?.decimals ?? 18,
-        allocationTokenSymbol: vaultAsset?.symbol ?? null,
-      });
+    const totalUsd = (risk.totalAdapterAssetsUsd ?? 0) + idleUsd;
+    const vaultAsset = risk.vaultAsset ?? null;
+    const decimals = vaultAsset?.decimals ?? 18;
+    const symbol = vaultAsset?.symbol ?? null;
+    const liquidityMarketId = risk.liquidityMarket?.marketId?.toLowerCase() ?? null;
+    const chainId = getVaultByAddress(vaultAddress)?.chainId ?? BASE_CHAIN_ID;
+
+    const idleRow: IdleRow = {
+      kind: 'idle',
+      allocated: idleUsd,
+      pct: totalUsd > 0 ? (idleUsd / totalUsd) * 100 : 0,
+      allocationAssets: risk.idle?.assets ?? '0',
+      decimals,
+      symbol,
+    };
+
+    const vaultRows: VaultAdapterRow[] = [];
+    const marketRows: MarketRow[] = [];
+    const adapterList = (risk.adapters ?? [])
+      .slice()
+      .sort((a, b) => (b.allocationUsd ?? 0) - (a.allocationUsd ?? 0));
+
+    for (const adapter of adapterList) {
+      if (adapter.adapterType === 'MetaMorphoAdapter') {
+        const underlyingVaultAddress =
+          adapter.underlyingVault?.address ?? adapter.underlyingVaultAddress ?? null;
+        vaultRows.push({
+          kind: 'vault',
+          market: adapter.underlyingVault?.name ?? adapter.adapterLabel,
+          morphoHref: underlyingVaultAddress
+            ? getMorphoVaultUrl(chainId, underlyingVaultAddress)
+            : null,
+          allocated: adapter.allocationUsd ?? 0,
+          pct: totalUsd > 0 ? ((adapter.allocationUsd ?? 0) / totalUsd) * 100 : 0,
+          supplyApy: adapter.apy ?? null,
+          allocationAssets: adapter.allocationAssets ?? null,
+          decimals,
+          symbol,
+          isLiquidityAdapter: Boolean(adapter.isLiquidityAdapter),
+        });
+      }
+
+      const markets = [...(adapter.markets ?? [])].sort(
+        (a, b) => (b.allocationUsd ?? 0) - (a.allocationUsd ?? 0)
+      );
+
+      for (const m of markets) {
+        if (
+          !shouldShowMarketEntry(
+            m.allocationUsd,
+            m.allocationAssets,
+            m.absoluteCap,
+            m.relativeCap
+          )
+        ) {
+          continue;
+        }
+
+        const col = m.market?.collateralAsset?.symbol;
+        const loan = m.market?.loanAsset?.symbol;
+        const marketLabel =
+          col && loan ? `${col} / ${loan}` : loan || col || adapter.adapterLabel || 'Market';
+        const rowMarketId = marketIdKey(m.market);
+        const morphoMarketId = m.market?.uniqueKey ?? m.market?.id ?? resolveMarketId(m.market) ?? rowMarketId;
+        const isLiquidityMarket =
+          liquidityMarketId != null &&
+          rowMarketId != null &&
+          rowMarketId === liquidityMarketId;
+
+        marketRows.push({
+          kind: 'market',
+          rowKey: rowMarketId ?? `${marketLabel}-${marketRows.length}`,
+          market: marketLabel,
+          morphoHref: morphoMarketId ? getMorphoMarketUrl(chainId, morphoMarketId) : null,
+          lltv: m.market?.lltv ?? null,
+          allocationAssets: m.allocationAssets ?? null,
+          decimals: m.market?.loanAsset?.decimals ?? decimals,
+          symbol: m.market?.loanAsset?.symbol ?? symbol,
+          utilization: m.market?.state?.utilization ?? null,
+          liquidity: m.market?.state?.liquidityAssetsUsd ?? null,
+          borrowApy: m.market?.state?.borrowApy ?? null,
+          supplyApy: m.market?.state?.supplyApy ?? null,
+          allocated: m.allocationUsd ?? 0,
+          pct: totalUsd > 0 ? ((m.allocationUsd ?? 0) / totalUsd) * 100 : 0,
+          isLiquidityMarket,
+        });
+      }
     }
 
-    return { rows, total: totalUsd };
-  }, [risk]);
+    return { idleRow, vaultRows, marketRows, total: totalUsd };
+  }, [risk, vaultAddress]);
 
   if (!preloadedRisk && isLoading) {
     return (
@@ -209,7 +288,7 @@ export function VaultV2Allocations({ vaultAddress, preloadedRisk }: VaultV2Alloc
     );
   }
 
-  if (error || !risk) {
+  if (error || !risk || !idleRow) {
     return (
       <Card>
         <CardHeader>
@@ -224,18 +303,7 @@ export function VaultV2Allocations({ vaultAddress, preloadedRisk }: VaultV2Alloc
     );
   }
 
-  if (rows.length === 0) {
-    return (
-      <Card>
-        <CardHeader>
-          <CardTitle>Allocations</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-sm text-slate-500 dark:text-slate-400">No allocations yet.</p>
-        </CardContent>
-      </Card>
-    );
-  }
+  const colSpan = 7;
 
   return (
     <Card>
@@ -252,133 +320,122 @@ export function VaultV2Allocations({ vaultAddress, preloadedRisk }: VaultV2Alloc
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Market</TableHead>
+                <TableHead>Allocation</TableHead>
                 <TableHead className="text-right">Utilization</TableHead>
                 <TableHead className="text-right">Liquidity</TableHead>
                 <TableHead className="text-right">Borrow APY</TableHead>
                 <TableHead className="text-right">Supply APY</TableHead>
                 <TableHead className="text-right">Allocated</TableHead>
-                <TableHead className="text-right">% Allocated</TableHead>
+                <TableHead className="text-right">% Alloc.</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {rows.map((r, i) =>
-                isAdapterRow(r) ? (
-                  <TableRow key={`adapter-${r.market}-${i}`} className="bg-muted/50">
-                    <TableCell>
-                      <div className="flex flex-col gap-0.5">
+              <SectionHeader title="Idle" colSpan={colSpan} />
+              <TableRow className="bg-muted/30">
+                <TableCell>
+                  <span className="font-medium">Idle</span>
+                </TableCell>
+                <TableCell className="text-right">—</TableCell>
+                <TableCell className="text-right">—</TableCell>
+                <TableCell className="text-right">—</TableCell>
+                <TableCell className="text-right">—</TableCell>
+                <TableCell className="text-right">
+                  <AllocatedCell
+                    allocationAssets={idleRow.allocationAssets}
+                    allocated={idleRow.allocated}
+                    decimals={idleRow.decimals}
+                    symbol={idleRow.symbol}
+                  />
+                </TableCell>
+                <TableCell className="text-right">{`${idleRow.pct.toFixed(2)}%`}</TableCell>
+              </TableRow>
+
+              {vaultRows.length > 0 && (
+                <>
+                  <SectionHeader title="Vault Adapter" colSpan={colSpan} />
+                  {vaultRows.map((r) => (
+                    <TableRow key={`vault-${r.market}`}>
+                      <TableCell>
                         <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-semibold">{r.market}</span>
-                          {r.isVaultAdapter && (
-                            <Badge variant="outline" className="text-xs">
-                              Vault Adapter
-                            </Badge>
-                          )}
+                          <MorphoNameLink href={r.morphoHref}>{r.market}</MorphoNameLink>
+                          <Badge variant="outline" className="text-xs">
+                            Vault Adapter
+                          </Badge>
                           {r.isLiquidityAdapter && (
                             <Badge className="flex items-center gap-1 bg-emerald-600 text-white text-xs">
                               <Zap className="h-3 w-3" />
-                              Liquidity Adapter
-                            </Badge>
-                          )}
-                          {r.isIdleVaultAssets && (
-                            <Badge variant="outline" className="text-xs">
-                              Idle Adapter
+                              Liquidity
                             </Badge>
                           )}
                         </div>
-                        <span className="text-muted-foreground text-xs">
-                          {r.isIdleVaultAssets
-                            ? 'Not deployed to adapters'
-                            : r.isVaultAdapter
-                              ? 'Vault adapter'
-                              : r.isLiquidityAdapter
-                                ? 'Liquidity adapter'
-                                : 'Adapter'}
-                        </span>
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-right">—</TableCell>
-                    <TableCell className="text-right">
-                      {r.liquidity != null && Number.isFinite(r.liquidity)
-                        ? formatCompactUSD(r.liquidity)
-                        : '—'}
-                    </TableCell>
-                    <TableCell className="text-right">—</TableCell>
-                    <TableCell className="text-right">
-                      {formatOrDash(scalePercent(r.supplyApy))}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex flex-col items-end gap-0.5">
-                        <span>
-                          {formatAllocatedToken(
-                            r.allocationAssets,
-                            r.allocated,
-                            r.allocationTokenDecimals,
-                            r.allocationTokenSymbol
-                          )}
-                        </span>
-                        <span className="text-muted-foreground text-xs">
-                          {formatCompactUSD(r.allocated)}
-                        </span>
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-right">{`${r.pct.toFixed(2)}%`}</TableCell>
-                  </TableRow>
-                ) : (
-                  <TableRow key={r.rowKey}>
-                    <TableCell className="pl-8">
-                      <div className="flex flex-col gap-0.5">
+                      </TableCell>
+                      <TableCell className="text-right">—</TableCell>
+                      <TableCell className="text-right">—</TableCell>
+                      <TableCell className="text-right">—</TableCell>
+                      <TableCell className="text-right">
+                        {formatOrDash(scalePercent(r.supplyApy))}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <AllocatedCell
+                          allocationAssets={r.allocationAssets}
+                          allocated={r.allocated}
+                          decimals={r.decimals}
+                          symbol={r.symbol}
+                        />
+                      </TableCell>
+                      <TableCell className="text-right">{`${r.pct.toFixed(2)}%`}</TableCell>
+                    </TableRow>
+                  ))}
+                </>
+              )}
+
+              {marketRows.length > 0 && (
+                <>
+                  <SectionHeader title="Morpho Blue Market" colSpan={colSpan} />
+                  {marketRows.map((r) => (
+                    <TableRow key={r.rowKey}>
+                      <TableCell>
                         <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-medium">{r.market}</span>
+                          <MorphoNameLink href={r.morphoHref}>{r.market}</MorphoNameLink>
                           {r.isLiquidityMarket && (
                             <Badge className="flex items-center gap-1 bg-emerald-600 text-white text-xs">
                               <Zap className="h-3 w-3" />
                               Liquidity
                             </Badge>
                           )}
-                          {!r.isLiquidityMarket && formatLtv(r.lltv) === '—' && (
+                          {formatLtv(r.lltv) !== '—' && (
                             <Badge variant="outline" className="text-xs">
-                              Idle
+                              LTV {formatLtv(r.lltv)}
                             </Badge>
                           )}
                         </div>
-                        <span className="text-muted-foreground text-xs">
-                          {formatLtv(r.lltv) === '—' ? 'Idle' : `LTV ${formatLtv(r.lltv)}`}
-                        </span>
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {formatOrDash(scalePercent(r.utilization))}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {r.liquidity != null && Number.isFinite(r.liquidity)
-                        ? formatCompactUSD(r.liquidity)
-                        : '—'}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {formatOrDash(scalePercent(r.borrowApy))}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {formatOrDash(scalePercent(r.supplyApy))}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex flex-col items-end gap-0.5">
-                        <span>
-                          {formatAllocatedToken(
-                            r.allocationAssets,
-                            r.allocated,
-                            r.allocationTokenDecimals,
-                            r.allocationTokenSymbol
-                          )}
-                        </span>
-                        <span className="text-muted-foreground text-xs">
-                          {formatCompactUSD(r.allocated)}
-                        </span>
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-right">{`${r.pct.toFixed(2)}%`}</TableCell>
-                  </TableRow>
-                )
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {formatOrDash(scalePercent(r.utilization))}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {r.liquidity != null && Number.isFinite(r.liquidity)
+                          ? formatCompactUSD(r.liquidity)
+                          : '—'}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {formatOrDash(scalePercent(r.borrowApy))}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {formatOrDash(scalePercent(r.supplyApy))}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <AllocatedCell
+                          allocationAssets={r.allocationAssets}
+                          allocated={r.allocated}
+                          decimals={r.decimals}
+                          symbol={r.symbol}
+                        />
+                      </TableCell>
+                      <TableCell className="text-right">{`${r.pct.toFixed(2)}%`}</TableCell>
+                    </TableRow>
+                  ))}
+                </>
               )}
             </TableBody>
           </Table>
@@ -387,4 +444,3 @@ export function VaultV2Allocations({ vaultAddress, preloadedRisk }: VaultV2Alloc
     </Card>
   );
 }
-

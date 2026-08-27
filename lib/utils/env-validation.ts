@@ -1,6 +1,6 @@
 /**
  * Environment Variable Validation
- * Validates required environment variables at startup
+ * RPC keys are optional; public Base RPCs are used as fallback.
  */
 
 import { logger } from './logger';
@@ -11,29 +11,14 @@ interface EnvValidationResult {
   warnings: string[];
 }
 
-/**
- * Validate required environment variables
- */
 export function validateEnvVars(): EnvValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
 
-  // At least one RPC provider must be configured
-  const hasAlchemyKey = !!(process.env.NEXT_PUBLIC_ALCHEMY_API_KEY || process.env.ALCHEMY_API_KEY);
-  const hasCoinbaseKey = !!process.env.COINBASE_CDP_API_KEY;
-  
-  if (!hasAlchemyKey && !hasCoinbaseKey) {
-    warnings.push('No RPC API key configured (ALCHEMY_API_KEY or COINBASE_CDP_API_KEY). Using demo endpoints (rate limited)');
-  }
-
-  // Server-side RPC key recommended
-  if (!process.env.ALCHEMY_API_KEY && !process.env.COINBASE_CDP_API_KEY) {
-    warnings.push('No server-side RPC API key configured. Server-side calls will use demo endpoints');
-  }
-
-  // Client-side RPC key recommended
-  if (!process.env.NEXT_PUBLIC_ALCHEMY_API_KEY) {
-    warnings.push('NEXT_PUBLIC_ALCHEMY_API_KEY is not set. Client-side RPC calls will use demo endpoints');
+  if (!process.env.ALCHEMY_API_KEY) {
+    warnings.push(
+      'ALCHEMY_API_KEY is not set. Oracle freshness, IRM utilization, and timelock reads will use public Base RPCs (rate limited).'
+    );
   }
 
   return {
@@ -43,9 +28,6 @@ export function validateEnvVars(): EnvValidationResult {
   };
 }
 
-/**
- * Log environment variable validation results
- */
 export function logEnvValidation(): void {
   const result = validateEnvVars();
 
@@ -65,4 +47,3 @@ export function logEnvValidation(): void {
     logger.info('Environment variables validated successfully');
   }
 }
-

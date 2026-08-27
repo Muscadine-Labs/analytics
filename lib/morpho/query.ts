@@ -1,8 +1,7 @@
 import { gql } from 'graphql-request';
-import type { CuratorConfig } from './types';
+import type { CuratorConfig, MorphoMarketRaw } from './types';
 import { BASE_CHAIN_ID } from '@/lib/constants';
 import { morphoGraphQLClient } from './graphql-client';
-import type { Market, QueryMarketsArgs, Maybe } from '@morpho-org/blue-api-sdk';
 
 const MARKETS_QUERY = gql`
   query MorphoMarkets($first: Int!, $chainIds: [Int!]) {
@@ -21,6 +20,7 @@ const MARKETS_QUERY = gql`
         state {
           supplyAssetsUsd
           borrowAssetsUsd
+          collateralAssetsUsd
           liquidityAssetsUsd
           sizeUsd
           supplyApy
@@ -32,29 +32,21 @@ const MARKETS_QUERY = gql`
   }
 `;
 
-/**
- * Response type for markets query matching our query structure
- */
 type MarketsQueryResponse = {
   markets: {
-    items: Maybe<Market>[] | null;
+    items: Array<MorphoMarketRaw | null> | null;
   } | null;
 };
 
-/**
- * Fetch Morpho markets using SDK types for type safety
- */
 export async function fetchMorphoMarkets(
   limit = 200,
-  _config?: CuratorConfig, // Reserved for future endpoint override
-  chainIds: number[] = [BASE_CHAIN_ID] // Default to Base chain
-): Promise<Market[]> {
+  _config?: CuratorConfig,
+  chainIds: number[] = [BASE_CHAIN_ID]
+): Promise<MorphoMarketRaw[]> {
   const data = await morphoGraphQLClient.request<MarketsQueryResponse>(
     MARKETS_QUERY,
-    { first: limit, chainIds } as QueryMarketsArgs
+    { first: limit, chainIds }
   );
 
-  return data.markets?.items?.filter((item): item is Market => item !== null) ?? [];
+  return data.markets?.items?.filter((item): item is MorphoMarketRaw => item !== null) ?? [];
 }
-
-

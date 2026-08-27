@@ -2,8 +2,7 @@ import { GRAPHQL_FIRST_LIMIT } from '@/lib/constants';
 import { mergeConfig, type CuratorConfigOverrides } from './config';
 import { computeMetricsForMarket } from './compute';
 import { fetchMorphoMarkets } from './query';
-import type { MorphoMarketMetrics } from './types';
-import type { Market } from '@morpho-org/blue-api-sdk';
+import type { MorphoMarketMetrics, MorphoMarketRaw } from './types';
 import { resolveMarketId } from './market-id';
 
 type RatingOptions = {
@@ -14,7 +13,7 @@ type RatingOptions = {
 };
 
 function applyBenchmark(
-  market: Market,
+  market: MorphoMarketRaw,
   benchmarkRates?: Record<string, number>,
   fallback?: number
 ): number | undefined {

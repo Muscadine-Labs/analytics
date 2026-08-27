@@ -43,7 +43,7 @@ export default function V2VaultPage() {
     );
   }
 
-  if (isError || !vault) {
+  if (isError) {
     return (
       <AppShell title="Error loading vault" description={error instanceof Error ? error.message : 'Failed to load vault data'}>
         <Card>

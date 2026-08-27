@@ -30,7 +30,6 @@ export function VaultRiskV2({ vaultAddress, preloadedData }: VaultRiskV2Props) {
   const sortedAdapters = useMemo(() => {
     if (!data?.adapters) return [];
     return [...data.adapters]
-      .filter((a) => a.adapterType !== 'MetaMorphoAdapter')
       .filter((a) => {
         const hasVisibleMarkets = (a.markets ?? []).some((m) =>
           shouldShowMarketEntry(

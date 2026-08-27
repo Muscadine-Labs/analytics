@@ -4,7 +4,7 @@ import { getIRMTargetUtilizationWithFallback } from './irm-utils';
 import type { Address } from 'viem';
 
 /**
- * Market Risk Scoring for Morpho V1 - Market Level Only
+ * Market risk scoring for Morpho Blue markets (used by V2 vault adapters).
  * 
  * Formula: marketRiskScore = 0.25 * liquidationHeadroomScore + 0.25 * utilizationScore + 0.25 * coverageRatioScore + 0.25 * oracleScore
  * All component scores ∈ [0, 100]
@@ -432,21 +432,19 @@ function applyGlobalCaps(
 ): number {
   let cappedScore = baseScore;
 
-  // oracleScore ≤ 20 ⇒ grade ≤ C+ (54)
-  if (oracleScore <= 20 && cappedScore > 54) {
-    cappedScore = 54; // C+ max
+  // oracleScore ≤ 20 ⇒ grade ≤ C+
+  if (oracleScore <= 20 && cappedScore > 76.999) {
+    cappedScore = 76.999;
   }
 
-  // utilization ≥ 95% ⇒ grade ≤ B− (60)
-  // (handled in utilizationScore, but also check if utilizationScore ≤ 20)
-  if (utilizationScore <= 20 && cappedScore > 60) {
-    cappedScore = 60; // B− max
+  // utilizationScore ≤ 20 ⇒ grade ≤ B−
+  if (utilizationScore <= 20 && cappedScore > 79.999) {
+    cappedScore = 79.999;
   }
 
-  // Coverage ratio < 1.0 (cannot fully cover -5% shock liquidations) ⇒ grade ≤ B (68)
-  // If coverage ratio score < 100, then cannot fully cover liquidations
-  if (coverageRatioScore < 100 && cappedScore > 68) {
-    cappedScore = 68; // B max
+  // Coverage ratio cannot fully cover liquidations ⇒ grade ≤ B
+  if (coverageRatioScore < 100 && cappedScore > 83.999) {
+    cappedScore = 83.999;
   }
 
   return cappedScore;

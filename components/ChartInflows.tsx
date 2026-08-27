@@ -108,7 +108,12 @@ export function ChartInflows({ dailyData, cumulativeData, isLoading = false, tit
                 if (isNaN(numValue)) return ['N/A', viewMode === 'daily' ? 'Daily Inflows' : 'Cumulative Inflows'];
                 return [formatTooltipValue(numValue), viewMode === 'daily' ? 'Daily Inflows' : 'Cumulative Inflows'];
               }}
-              labelFormatter={(label) => new Date(label).toLocaleDateString()}
+              labelFormatter={(label) => {
+                if (typeof label === 'string' || typeof label === 'number') {
+                  return new Date(label).toLocaleDateString();
+                }
+                return String(label ?? '');
+              }}
             />
             <Line 
               type="monotone" 
