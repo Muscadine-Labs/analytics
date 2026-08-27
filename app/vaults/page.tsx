@@ -1,7 +1,6 @@
 'use client';
 
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { ExternalLink } from 'lucide-react';
 import { useMemo } from 'react';
 import { useMorphoMarkets } from '@/lib/hooks/useMorphoMarkets';
@@ -30,6 +29,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { RatingBadge } from '@/components/morpho/RatingBadge';
 import { formatCompactUSD, formatPercentage } from '@/lib/format/number';
 import { useVaultList } from '@/lib/hooks/useProtocolStats';
+import { BASE_CHAIN_ID, getMorphoMarketUrl } from '@/lib/constants';
 import { AppShell } from '@/components/layout/AppShell';
 
 type MergedMarket = SuppliedMarket & {
@@ -38,7 +38,6 @@ type MergedMarket = SuppliedMarket & {
 };
 
 export default function VaultsPage() {
-  const router = useRouter();
   const morpho = useMorphoMarkets();
   const supplied = useMarketsSupplied();
   const vaultsQuery = useVaultList();
@@ -173,7 +172,7 @@ export default function VaultsPage() {
 
                 return (
                   <div key={vaultSummary.vault.id} className="space-y-6">
-                    <Link href={`/vaults/${vaultSummary.vault.address}`}>
+                    <Link href={`/vault/v2/${vaultSummary.vault.address}`}>
                       <Card className={`${borderColor} cursor-pointer transition-all duration-200 hover:shadow-lg`}>
                         <CardHeader>
                           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
@@ -182,9 +181,11 @@ export default function VaultsPage() {
                                 <CardTitle className="text-2xl">{vaultSummary.vault.name}</CardTitle>
                                 <Badge variant="outline">{vaultSummary.vault.asset}</Badge>
                               </div>
-                              <CardDescription className="mt-2">
-                                {vaultSummary.vault.description}
-                              </CardDescription>
+                              {vaultSummary.vault.description ? (
+                                <CardDescription className="mt-2">
+                                  {vaultSummary.vault.description}
+                                </CardDescription>
+                              ) : null}
                             </div>
                             {vaultSummary.avgRating && (
                               <RatingBadge rating={vaultSummary.avgRating} className="px-3 py-1.5 text-sm" />
@@ -262,22 +263,24 @@ export default function VaultsPage() {
                                   const utilizationPercent =
                                     utilizationValue !== null ? utilizationValue * 100 : null;
 
+                                  const marketUrl = getMorphoMarketUrl(BASE_CHAIN_ID, marketLink);
+
                                   return (
                                     <TableRow
                                       key={market.uniqueKey}
                                       className="cursor-pointer transition hover:bg-muted/40"
-                                      onClick={() => router.push(`/markets/${marketLink}`)}
                                     >
                                       <TableCell className="font-medium">
-                                        <Link
-                                          href={`/markets/${marketLink}`}
+                                        <a
+                                          href={marketUrl}
+                                          target="_blank"
+                                          rel="noreferrer"
                                           className="flex items-center gap-2 hover:underline"
-                                          onClick={(e) => e.stopPropagation()}
                                         >
                                           <span>{market.collateralAsset?.symbol ?? 'Unknown'}</span>
                                           <span className="text-muted-foreground">/</span>
                                           <span>{market.loanAsset?.symbol ?? 'Unknown'}</span>
-                                        </Link>
+                                        </a>
                                       </TableCell>
                                       <TableCell>
                                         {totalSupplyUsd !== null

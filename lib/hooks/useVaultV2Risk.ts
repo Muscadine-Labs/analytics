@@ -16,12 +16,13 @@ async function fetchVaultV2Risk(vaultAddress: string): Promise<V2VaultRiskRespon
     }
     
     // Try to parse as JSON for structured error messages
+    let json: { message?: string; error?: string } | null = null;
     try {
-      const json = JSON.parse(text);
-      throw new Error(json.message || json.error || 'Failed to fetch vault v2 risk data');
+      json = JSON.parse(text);
     } catch {
-      throw new Error(text || 'Failed to fetch vault v2 risk data');
+      json = null;
     }
+    throw new Error(json?.message || json?.error || text || 'Failed to fetch vault v2 risk data');
   }
 
   return res.json();

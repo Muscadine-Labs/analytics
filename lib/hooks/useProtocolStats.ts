@@ -3,8 +3,8 @@ import { useQuery } from '@tanstack/react-query';
 export interface ProtocolStats {
   totalDeposited: number;
   totalFeesGenerated: number;
+  totalRevenueGenerated: number;
   activeVaults: number;
-  totalInterestGenerated: number;
   users: number;
   tvlTrend: Array<{ date: string; value: number }>;
   tvlByVault?: Array<{
@@ -32,11 +32,8 @@ export interface VaultWithData {
   performanceFeeBps: number | null;
   status: 'active' | 'paused' | 'deprecated';
   riskTier: 'low' | 'medium' | 'high';
-  createdAt: string;
   description?: string;
-  version?: 'v1' | 'v2';
   tvl: number | null;
-  /** Raw asset amount in smallest units (from Morpho totalAssets). */
   totalAssets?: string | null;
   apy: number | null;
   depositors: number;
@@ -46,13 +43,10 @@ export interface VaultWithData {
 }
 
 export interface VaultDetail extends VaultWithData {
-  apy: number | null;
   apyBase: number | null;
   apyBoosted: number | null;
   feesYtd: number | null;
   utilization: number;
-  revenueAllTime: number | null;
-  feesAllTime: number | null;
   apyBreakdown?: {
     apy: number | null;
     netApy: number | null;
@@ -73,48 +67,13 @@ export interface VaultDetail extends VaultWithData {
     yearlySupplyTokens: number;
     chainId?: number | null;
   }>;
-  allocation?: Array<{
-    marketKey: string;
-    loanAssetAddress?: string | null;
-    loanAssetName?: string | null;
-    loanAssetSymbol?: string | null;
-    collateralAssetAddress?: string | null;
-    collateralAssetName?: string | null;
-    collateralAssetSymbol?: string | null;
-    oracleAddress?: string | null;
-    irmAddress?: string | null;
-    lltv?: number | null;
-    supplyCap?: number | null;
-    supplyAssets?: number | null;
-    supplyAssetsUsd?: number | null;
-    supplyApy?: number | null;
-    borrowApy?: number | null;
-    utilization?: number | null;
-    liquidityAssetsUsd?: number | null;
-    marketRewards?: Array<{
-      assetAddress: string;
-      chainId?: number | null;
-      supplyApr: number;
-      borrowApr?: number | null;
-    }>;
-  }>;
-  queues?: {
-    supplyQueueIndex: number | null;
-    withdrawQueueIndex: number | null;
-  };
-  warnings?: Array<{ type: string; level: 'YELLOW' | 'RED' }>;
   metadata?: {
     description?: string | null;
     image?: string | null;
-    forumLink?: string | null;
-    curators?: Array<{ image?: string | null; name?: string | null; url?: string | null }>;
   };
   roles?: {
     owner?: string | null;
     curator?: string | null;
-    guardian?: string | null;
-    /** V1: duration in seconds (number). V2: address (string). */
-    timelock?: string | number | null;
   };
   transactions?: Array<{
     blockNumber: number;
@@ -123,7 +82,7 @@ export interface VaultDetail extends VaultWithData {
     userAddress?: string | null;
   }>;
   parameters: {
-    performanceFeeBps: number;
+    performanceFeeBps: number | null;
     performanceFeePercent?: number | null;
     managementFeeBps?: number | null;
     managementFeePercent?: number | null;
@@ -131,15 +90,8 @@ export interface VaultDetail extends VaultWithData {
     maxWithdrawal: number | null;
     strategyNotes: string;
   };
-  historicalData?: {
-    apy?: Array<{ x: number; y: number }>;
-    netApy?: Array<{ x: number; y: number }>;
-    totalAssets?: Array<{ x: number; y: number }>;
-    totalAssetsUsd?: Array<{ x: number; y: number }>;
-  };
 }
 
-// Protocol stats hook
 export const useProtocolStats = () => {
   return useQuery<ProtocolStats>({
     queryKey: ['protocol-stats'],
@@ -153,7 +105,6 @@ export const useProtocolStats = () => {
   });
 };
 
-// Vault list hook
 export const useVaultList = (filters?: {
   asset?: string;
   status?: string;
@@ -168,7 +119,7 @@ export const useVaultList = (filters?: {
       if (filters?.status) searchParams.set('status', filters.status);
       if (filters?.riskTier) searchParams.set('riskTier', filters.riskTier);
       if (filters?.search) searchParams.set('search', filters.search);
-      
+
       const response = await fetch(`/api/vaults?${searchParams}`, {
         credentials: 'omit',
       });
@@ -178,7 +129,6 @@ export const useVaultList = (filters?: {
   });
 };
 
-// Vault detail hook
 export const useVault = (id: string) => {
   return useQuery<VaultDetail>({
     queryKey: ['vault', id],
@@ -192,4 +142,3 @@ export const useVault = (id: string) => {
     enabled: !!id,
   });
 };
-

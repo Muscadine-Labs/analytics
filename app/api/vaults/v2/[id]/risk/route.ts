@@ -727,6 +727,23 @@ async function computeAdapterRisk(
   return null;
 }
 
+function sumTokenAmounts(
+  a: string | number | null | undefined,
+  b: string | number | null | undefined
+): string | null {
+  try {
+    const toBigInt = (value: string | number | null | undefined): bigint => {
+      if (value == null) return 0n;
+      const integerPart = String(value).split('.')[0];
+      if (!/^-?\d+$/.test(integerPart)) return 0n;
+      return BigInt(integerPart);
+    };
+    return String(toBigInt(a) + toBigInt(b));
+  } catch {
+    return null;
+  }
+}
+
 function computeWeightedRisk(markets: V2MarketRiskData[]): { weightedScore: number; grade: MarketRiskGrade } {
   let weightedSum = 0;
   let totalWeight = 0;
@@ -824,16 +841,22 @@ export async function GET(
       0
     );
 
-    // Calculate weighted risk score in a single reduce pass
+    const scoredAllocationUsd = adapterRisks.reduce((sum, adapter) => {
+      if (adapter.allocationUsd > 0 && adapter.markets.length > 0) {
+        return sum + adapter.allocationUsd;
+      }
+      return sum;
+    }, 0);
+
     const vaultWeightedSum = adapterRisks.reduce((sum, adapter) => {
-      if (adapter.allocationUsd > 0) {
+      if (adapter.allocationUsd > 0 && adapter.markets.length > 0) {
         return sum + adapter.riskScore * adapter.allocationUsd;
       }
       return sum;
     }, 0);
 
     const vaultRiskScore =
-      totalAdapterAssetsUsd > 0 ? vaultWeightedSum / totalAdapterAssetsUsd : 0;
+      scoredAllocationUsd > 0 ? vaultWeightedSum / scoredAllocationUsd : 0;
 
     const vaultAsset = data.vault?.asset
       ? { symbol: data.vault.asset.symbol ?? 'UNKNOWN', decimals: data.vault.asset.decimals ?? 18 }
@@ -855,7 +878,7 @@ export async function GET(
     const totalLiquidityAssets =
       baseLiquidity == null && forceDeallocatableLiquidity == null
         ? null
-        : String(BigInt(baseLiquidity ?? 0) + BigInt(forceDeallocatableLiquidity ?? 0));
+        : sumTokenAmounts(baseLiquidity, forceDeallocatableLiquidity);
 
     const liquidityBreakdown: V2LiquidityBreakdown | null =
       liquidityUsd == null

@@ -46,9 +46,10 @@ export function createErrorResponse(
   }
 
   if (error instanceof Error) {
+    logger.error('Unhandled API error', error);
     return {
       error: {
-        message: error.message || defaultMessage,
+        message: defaultMessage,
         statusCode: 500,
       },
       statusCode: 500,

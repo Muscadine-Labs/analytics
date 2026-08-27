@@ -42,7 +42,10 @@ export async function GET(request: NextRequest) {
       limit = Math.min(parsed, GRAPHQL_FIRST_LIMIT);
     }
 
-    const overrides = parseConfigOverrides(searchParams);
+    const allowOverrides =
+      process.env.NODE_ENV === 'development' ||
+      process.env.MORPHO_ALLOW_CONFIG_OVERRIDES === 'true';
+    const overrides = allowOverrides ? parseConfigOverrides(searchParams) : undefined;
 
     const markets = await getMorphoMarketRatings({
       limit,

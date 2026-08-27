@@ -451,7 +451,10 @@ export async function GET(
     }
 
     const cfg = getVaultByAddress(address);
-    const chainId = cfg?.chainId ?? BASE_CHAIN_ID;
+    if (!cfg) {
+      throw new AppError('Vault not found in configuration', 404, 'VAULT_NOT_FOUND');
+    }
+    const chainId = cfg.chainId ?? BASE_CHAIN_ID;
 
     const data = await morphoGraphQLClient.request<GraphVaultGovernanceResponse>(
       VAULT_V2_GOVERNANCE_QUERY,
