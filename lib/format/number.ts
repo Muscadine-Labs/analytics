@@ -114,3 +114,59 @@ export const formatTokenAmount = (
     maximumFractionDigits: displayDecimals,
   }).format(formatted);
 };
+
+/** Parse Morpho raw token amounts from API strings or JSON numbers. */
+export function parseRawTokenAmount(
+  value: string | number | bigint | null | undefined
+): bigint | null {
+  if (value == null) return null;
+  if (typeof value === 'bigint') return value;
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return null;
+    return BigInt(Math.trunc(value));
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  const integerPart = trimmed.split('.')[0] ?? '';
+  if (/^-?\d+$/.test(integerPart)) {
+    try {
+      return BigInt(integerPart);
+    } catch {
+      return null;
+    }
+  }
+
+  try {
+    return BigInt(trimmed);
+  } catch {
+    return null;
+  }
+}
+
+/** Format raw token units with bigint-safe precision. */
+export const formatRawTokenAmount = (
+  raw: bigint | string | number | null | undefined,
+  decimals: number,
+  displayDecimals: number = 2
+): string => {
+  const value = typeof raw === 'bigint' ? raw : parseRawTokenAmount(raw);
+  if (value == null || value === 0n || decimals < 0) {
+    return (0).toLocaleString('en-US', {
+      minimumFractionDigits: displayDecimals,
+      maximumFractionDigits: displayDecimals,
+    });
+  }
+
+  const negative = value < 0n;
+  const abs = negative ? -value : value;
+  const base = 10n ** BigInt(decimals);
+  const whole = abs / base;
+  const frac = abs % base;
+  const wholeStr = whole.toLocaleString('en-US');
+  const fracPadded = frac.toString().padStart(decimals, '0');
+  const fracTrimmed = fracPadded.slice(0, displayDecimals).padEnd(displayDecimals, '0');
+  const out = `${wholeStr}.${fracTrimmed}`;
+  return negative ? `-${out}` : out;
+};

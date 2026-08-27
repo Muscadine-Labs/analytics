@@ -1,4 +1,4 @@
-// Minimal ESLint flat config (ESLint 9.x — matches curator peer-deps for eslint-config-next)
+// Minimal ESLint flat config (ESLint 10.x flat config)
 import js from '@eslint/js';
 
 export default [

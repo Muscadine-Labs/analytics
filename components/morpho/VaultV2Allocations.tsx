@@ -14,7 +14,11 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { useVaultV2Risk } from '@/lib/hooks/useVaultV2Risk';
-import { formatCompactUSD, formatPercentage, formatLtv, formatTokenAmount } from '@/lib/format/number';
+import { BASE_CHAIN_ID, getMorphoMarketUrl, getMorphoVaultUrl } from '@/lib/constants';
+import { getVaultByAddress } from '@/lib/config/vaults';
+import { formatCompactUSD, formatPercentage, formatLtv, formatRawTokenAmount, parseRawTokenAmount } from '@/lib/format/number';
+import { getTokenDisplayDecimals, resolveAssetDecimals } from '@/lib/format/asset-decimals';
+import { resolveMarketId } from '@/lib/morpho/market-id';
 import { shouldShowMarketEntry } from '@/lib/morpho/format-risk';
 import type { V2VaultRiskResponse } from '@/app/api/vaults/v2/[id]/risk/route';
 
@@ -33,21 +37,25 @@ function scalePercent(value: number | null | undefined): number | null {
 }
 
 function formatAllocatedToken(
-  allocationAssets: string | null,
+  allocationAssets: string | number | null,
   allocatedUsd: number,
   decimals: number,
   symbol: string | null
 ): string {
-  if (allocationAssets != null) {
-    try {
-      return `${formatTokenAmount(BigInt(allocationAssets.split('.')[0] || '0'), decimals, 2)} ${symbol ?? ''}`.trim();
-    } catch {
-      /* fall through */
-    }
+  const chainDecimals = resolveAssetDecimals(symbol, decimals);
+  const displayDecimals = getTokenDisplayDecimals(symbol, chainDecimals);
+  const raw = parseRawTokenAmount(allocationAssets);
+
+  if (raw != null) {
+    const amount = formatRawTokenAmount(raw, chainDecimals, displayDecimals);
+    return symbol ? `${amount} ${symbol}` : amount;
   }
+
   if (allocatedUsd === 0) {
-    return `${formatTokenAmount(0n, decimals, 2)} ${symbol ?? ''}`.trim();
+    const amount = formatRawTokenAmount(0n, chainDecimals, displayDecimals);
+    return symbol ? `${amount} ${symbol}` : amount;
   }
+
   return '—';
 }
 
@@ -55,7 +63,7 @@ type IdleRow = {
   kind: 'idle';
   allocated: number;
   pct: number;
-  allocationAssets: string | null;
+  allocationAssets: string | number | null;
   decimals: number;
   symbol: string | null;
 };
@@ -63,10 +71,11 @@ type IdleRow = {
 type VaultAdapterRow = {
   kind: 'vault';
   market: string;
+  morphoHref: string | null;
   allocated: number;
   pct: number;
   supplyApy: number | null;
-  allocationAssets: string | null;
+  allocationAssets: string | number | null;
   decimals: number;
   symbol: string | null;
   isLiquidityAdapter: boolean;
@@ -76,8 +85,9 @@ type MarketRow = {
   kind: 'market';
   rowKey: string;
   market: string;
+  morphoHref: string | null;
   lltv: string | number | null;
-  allocationAssets: string | null;
+  allocationAssets: string | number | null;
   decimals: number;
   symbol: string | null;
   utilization: number | null;
@@ -91,11 +101,33 @@ type MarketRow = {
 
 type TableRow = IdleRow | VaultAdapterRow | MarketRow;
 
+function MorphoNameLink({
+  href,
+  children,
+}: {
+  href: string | null;
+  children: string;
+}) {
+  if (!href) {
+    return <span className="font-medium">{children}</span>;
+  }
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      className="font-medium hover:underline"
+    >
+      {children}
+    </a>
+  );
+}
+
 function marketIdKey(
   market: { uniqueKey?: string | null; marketId?: string | null; id?: string | null } | null | undefined
 ): string | null {
   if (!market) return null;
-  const key = market.uniqueKey ?? market.marketId ?? market.id;
+  const key = market.uniqueKey ?? resolveMarketId(market);
   return key ? key.toLowerCase() : null;
 }
 
@@ -105,7 +137,7 @@ function AllocatedCell({
   decimals,
   symbol,
 }: {
-  allocationAssets: string | null;
+  allocationAssets: string | number | null;
   allocated: number;
   decimals: number;
   symbol: string | null;
@@ -155,6 +187,7 @@ export function VaultV2Allocations({ vaultAddress, preloadedRisk }: VaultV2Alloc
     const decimals = vaultAsset?.decimals ?? 18;
     const symbol = vaultAsset?.symbol ?? null;
     const liquidityMarketId = risk.liquidityMarket?.marketId?.toLowerCase() ?? null;
+    const chainId = getVaultByAddress(vaultAddress)?.chainId ?? BASE_CHAIN_ID;
 
     const idleRow: IdleRow = {
       kind: 'idle',
@@ -173,9 +206,14 @@ export function VaultV2Allocations({ vaultAddress, preloadedRisk }: VaultV2Alloc
 
     for (const adapter of adapterList) {
       if (adapter.adapterType === 'MetaMorphoAdapter') {
+        const underlyingVaultAddress =
+          adapter.underlyingVault?.address ?? adapter.underlyingVaultAddress ?? null;
         vaultRows.push({
           kind: 'vault',
           market: adapter.underlyingVault?.name ?? adapter.adapterLabel,
+          morphoHref: underlyingVaultAddress
+            ? getMorphoVaultUrl(chainId, underlyingVaultAddress)
+            : null,
           allocated: adapter.allocationUsd ?? 0,
           pct: totalUsd > 0 ? ((adapter.allocationUsd ?? 0) / totalUsd) * 100 : 0,
           supplyApy: adapter.apy ?? null,
@@ -207,6 +245,7 @@ export function VaultV2Allocations({ vaultAddress, preloadedRisk }: VaultV2Alloc
         const marketLabel =
           col && loan ? `${col} / ${loan}` : loan || col || adapter.adapterLabel || 'Market';
         const rowMarketId = marketIdKey(m.market);
+        const morphoMarketId = m.market?.uniqueKey ?? m.market?.id ?? resolveMarketId(m.market) ?? rowMarketId;
         const isLiquidityMarket =
           liquidityMarketId != null &&
           rowMarketId != null &&
@@ -216,6 +255,7 @@ export function VaultV2Allocations({ vaultAddress, preloadedRisk }: VaultV2Alloc
           kind: 'market',
           rowKey: rowMarketId ?? `${marketLabel}-${marketRows.length}`,
           market: marketLabel,
+          morphoHref: morphoMarketId ? getMorphoMarketUrl(chainId, morphoMarketId) : null,
           lltv: m.market?.lltv ?? null,
           allocationAssets: m.allocationAssets ?? null,
           decimals: m.market?.loanAsset?.decimals ?? decimals,
@@ -232,7 +272,7 @@ export function VaultV2Allocations({ vaultAddress, preloadedRisk }: VaultV2Alloc
     }
 
     return { idleRow, vaultRows, marketRows, total: totalUsd };
-  }, [risk]);
+  }, [risk, vaultAddress]);
 
   if (!preloadedRisk && isLoading) {
     return (
@@ -317,7 +357,7 @@ export function VaultV2Allocations({ vaultAddress, preloadedRisk }: VaultV2Alloc
                     <TableRow key={`vault-${r.market}`}>
                       <TableCell>
                         <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-medium">{r.market}</span>
+                          <MorphoNameLink href={r.morphoHref}>{r.market}</MorphoNameLink>
                           <Badge variant="outline" className="text-xs">
                             Vault Adapter
                           </Badge>
@@ -356,7 +396,7 @@ export function VaultV2Allocations({ vaultAddress, preloadedRisk }: VaultV2Alloc
                     <TableRow key={r.rowKey}>
                       <TableCell>
                         <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-medium">{r.market}</span>
+                          <MorphoNameLink href={r.morphoHref}>{r.market}</MorphoNameLink>
                           {r.isLiquidityMarket && (
                             <Badge className="flex items-center gap-1 bg-emerald-600 text-white text-xs">
                               <Zap className="h-3 w-3" />

@@ -7,6 +7,7 @@ import { handleApiError, AppError } from '@/lib/utils/error-handler';
 import { createRateLimitMiddleware, RATE_LIMIT_REQUESTS_PER_MINUTE, MINUTE_MS } from '@/lib/utils/rate-limit';
 import { BASE_CHAIN_ID } from '@/lib/constants';
 import { fetchV1VaultMarkets, type V1VaultMarketData } from '@/lib/morpho/query-v1-vault-markets';
+import { parseRawTokenAmount } from '@/lib/format/number';
 import { resolveMarketId } from '@/lib/morpho/market-id';
 import {
   computeV1MarketRiskScores,
@@ -120,7 +121,7 @@ export type V2MarketRiskData = {
   market: V1VaultMarketData;
   scores: MarketRiskScores | null;
   allocationUsd: number;
-  allocationAssets: string | null;
+  allocationAssets: string | number | null;
   oracleTimestampData?: OracleTimestampData | null;
   /** Market absolute cap from vault caps (raw token amount). */
   absoluteCap?: string | null;
@@ -139,7 +140,7 @@ export type V2AdapterRiskData = {
   adapterType: AdapterType;
   adapterLabel: string;
   allocationUsd: number;
-  allocationAssets: string | null;
+  allocationAssets: string | number | null;
   riskScore: number;
   riskGrade: MarketRiskGrade;
   markets: V2MarketRiskData[];
@@ -415,7 +416,8 @@ async function buildMarketRisk(
     );
 
   const allocationAssets =
-    supplyAssets ?? normalizedMarket.vaultSupplyAssets ?? null;
+    adapterAssetsString(supplyAssets) ??
+    adapterAssetsString(normalizedMarket.vaultSupplyAssets);
 
   return {
     market: normalizedMarket,
@@ -563,7 +565,9 @@ function adapterAssetsString(
   assets: string | number | null | undefined
 ): string | null {
   if (assets === null || assets === undefined) return null;
-  return String(assets);
+  const raw = parseRawTokenAmount(assets);
+  if (raw == null) return null;
+  return raw.toString();
 }
 
 async function mergeCapMarketsForAdapter(
@@ -595,10 +599,7 @@ async function mergeCapMarketsForAdapter(
       continue;
     }
 
-    const allocation =
-      cap.allocation === null || cap.allocation === undefined
-        ? '0'
-        : String(cap.allocation);
+    const allocation = adapterAssetsString(cap.allocation);
 
     byKey.set(
       key,
@@ -606,7 +607,7 @@ async function mergeCapMarketsForAdapter(
         ...(await buildMarketRisk(
           marketData,
           0,
-          allocation === '0' ? null : allocation
+          allocation
         )),
         ...capFields,
       }
@@ -731,17 +732,10 @@ function sumTokenAmounts(
   a: string | number | null | undefined,
   b: string | number | null | undefined
 ): string | null {
-  try {
-    const toBigInt = (value: string | number | null | undefined): bigint => {
-      if (value == null) return 0n;
-      const integerPart = String(value).split('.')[0];
-      if (!/^-?\d+$/.test(integerPart)) return 0n;
-      return BigInt(integerPart);
-    };
-    return String(toBigInt(a) + toBigInt(b));
-  } catch {
-    return null;
-  }
+  const left = parseRawTokenAmount(a);
+  const right = parseRawTokenAmount(b);
+  if (left == null && right == null) return null;
+  return String((left ?? 0n) + (right ?? 0n));
 }
 
 function computeWeightedRisk(markets: V2MarketRiskData[]): { weightedScore: number; grade: MarketRiskGrade } {
@@ -863,8 +857,7 @@ export async function GET(
       : null;
 
     const idleAssetsUsd = data.vault.idleAssetsUsd ?? 0;
-    const idleAssets =
-      data.vault.idleAssets != null ? String(data.vault.idleAssets) : null;
+    const idleAssets = adapterAssetsString(data.vault.idleAssets);
 
     const baseLiquidityUsd = data.vault.liquidityUsd;
     const forceDeallocatableLiquidityUsd = data.vault.forceDeallocatableLiquidityUsd;

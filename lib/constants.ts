@@ -49,6 +49,11 @@ export function getMorphoMarketUrl(chainId: number, marketId: string): string {
   return `https://app.morpho.org/${network}/market/${marketId}`;
 }
 
+export function getMorphoVaultUrl(chainId: number, vaultAddress: string): string {
+  const network = chainId === ETHEREUM_CHAIN_ID ? 'ethereum' : 'base';
+  return `https://app.morpho.org/${network}/vault/${vaultAddress.toLowerCase()}`;
+}
+
 // Request Timeouts
 export const EXTERNAL_API_TIMEOUT_MS = 60000; // 60 seconds
 
