@@ -1,6 +1,6 @@
 # Muscadine Analytics
 
-Next.js dashboard for Muscadine vaults on Morpho (Base). Live at [analytics.muscadine.xyz](https://analytics.muscadine.xyz).
+Next.js dashboard for Muscadine vaults on Morpho. 
 
 ## Quick Start
 
