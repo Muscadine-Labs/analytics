@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo } from 'react';
+import Link from 'next/link';
 import { Zap } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -16,6 +17,7 @@ import {
 import { useVaultV2Risk } from '@/lib/hooks/useVaultV2Risk';
 import { BASE_CHAIN_ID, getMorphoMarketUrl, getMorphoVaultUrl } from '@/lib/constants';
 import { getVaultByAddress } from '@/lib/config/vaults';
+import { isMorphoVaultV2Adapter } from '@/lib/morpho/vault-v2-adapter';
 import { formatCompactUSD, formatPercentage, formatLtv, formatRawTokenAmount, parseRawTokenAmount } from '@/lib/format/number';
 import { getTokenDisplayDecimals, resolveAssetDecimals } from '@/lib/format/asset-decimals';
 import { resolveMarketId } from '@/lib/morpho/market-id';
@@ -70,8 +72,9 @@ type IdleRow = {
 
 type VaultAdapterRow = {
   kind: 'vault';
+  adapterType: 'MetaMorphoAdapter' | 'MorphoVaultV2Adapter';
   market: string;
-  morphoHref: string | null;
+  href: string | null;
   allocated: number;
   pct: number;
   supplyApy: number | null;
@@ -205,15 +208,27 @@ export function VaultV2Allocations({ vaultAddress, preloadedRisk }: VaultV2Alloc
       .sort((a, b) => (b.allocationUsd ?? 0) - (a.allocationUsd ?? 0));
 
     for (const adapter of adapterList) {
-      if (adapter.adapterType === 'MetaMorphoAdapter') {
+      if (
+        adapter.adapterType === 'MetaMorphoAdapter' ||
+        isMorphoVaultV2Adapter(adapter)
+      ) {
         const underlyingVaultAddress =
           adapter.underlyingVault?.address ?? adapter.underlyingVaultAddress ?? null;
+        const internalHref =
+          underlyingVaultAddress && getVaultByAddress(underlyingVaultAddress)
+            ? `/vault/v2/${underlyingVaultAddress}`
+            : null;
         vaultRows.push({
           kind: 'vault',
+          adapterType: isMorphoVaultV2Adapter(adapter)
+            ? 'MorphoVaultV2Adapter'
+            : 'MetaMorphoAdapter',
           market: adapter.underlyingVault?.name ?? adapter.adapterLabel,
-          morphoHref: underlyingVaultAddress
-            ? getMorphoVaultUrl(chainId, underlyingVaultAddress)
-            : null,
+          href:
+            internalHref ??
+            (underlyingVaultAddress
+              ? getMorphoVaultUrl(chainId, underlyingVaultAddress)
+              : null),
           allocated: adapter.allocationUsd ?? 0,
           pct: totalUsd > 0 ? ((adapter.allocationUsd ?? 0) / totalUsd) * 100 : 0,
           supplyApy: adapter.apy ?? null,
@@ -350,14 +365,63 @@ export function VaultV2Allocations({ vaultAddress, preloadedRisk }: VaultV2Alloc
                 <TableCell className="text-right">{`${idleRow.pct.toFixed(2)}%`}</TableCell>
               </TableRow>
 
-              {vaultRows.length > 0 && (
+              {vaultRows.filter((r) => r.adapterType === 'MorphoVaultV2Adapter').length > 0 && (
+                <>
+                  <SectionHeader title="Morpho Vault V2" colSpan={colSpan} />
+                  {vaultRows
+                    .filter((r) => r.adapterType === 'MorphoVaultV2Adapter')
+                    .map((r) => (
+                    <TableRow key={`vault-v2-${r.market}`}>
+                      <TableCell>
+                        <div className="flex flex-wrap items-center gap-2">
+                          {r.href?.startsWith('/') ? (
+                            <Link href={r.href} className="font-medium hover:underline">
+                              {r.market}
+                            </Link>
+                          ) : (
+                            <MorphoNameLink href={r.href}>{r.market}</MorphoNameLink>
+                          )}
+                          <Badge variant="outline" className="text-xs">
+                            Underlying vault
+                          </Badge>
+                          {r.isLiquidityAdapter && (
+                            <Badge className="flex items-center gap-1 bg-emerald-600 text-white text-xs">
+                              <Zap className="h-3 w-3" />
+                              Liquidity
+                            </Badge>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right">—</TableCell>
+                      <TableCell className="text-right">—</TableCell>
+                      <TableCell className="text-right">—</TableCell>
+                      <TableCell className="text-right">
+                        {formatOrDash(scalePercent(r.supplyApy))}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <AllocatedCell
+                          allocationAssets={r.allocationAssets}
+                          allocated={r.allocated}
+                          decimals={r.decimals}
+                          symbol={r.symbol}
+                        />
+                      </TableCell>
+                      <TableCell className="text-right">{`${r.pct.toFixed(2)}%`}</TableCell>
+                    </TableRow>
+                  ))}
+                </>
+              )}
+
+              {vaultRows.filter((r) => r.adapterType === 'MetaMorphoAdapter').length > 0 && (
                 <>
                   <SectionHeader title="Vault Adapter" colSpan={colSpan} />
-                  {vaultRows.map((r) => (
+                  {vaultRows
+                    .filter((r) => r.adapterType === 'MetaMorphoAdapter')
+                    .map((r) => (
                     <TableRow key={`vault-${r.market}`}>
                       <TableCell>
                         <div className="flex flex-wrap items-center gap-2">
-                          <MorphoNameLink href={r.morphoHref}>{r.market}</MorphoNameLink>
+                          <MorphoNameLink href={r.href}>{r.market}</MorphoNameLink>
                           <Badge variant="outline" className="text-xs">
                             Vault Adapter
                           </Badge>

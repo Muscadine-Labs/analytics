@@ -10,6 +10,12 @@ import { fetchV1VaultMarkets, type V1VaultMarketData } from '@/lib/morpho/query-
 import { parseRawTokenAmount } from '@/lib/format/number';
 import { resolveMarketId } from '@/lib/morpho/market-id';
 import {
+  isMorphoVaultV2Adapter,
+  mergeUnderlyingVaultInfo,
+  underlyingVaultLabel,
+  UNDERLYING_VAULT_FALLBACK,
+} from '@/lib/morpho/vault-v2-adapter';
+import {
   computeV1MarketRiskScores,
   isMarketIdle,
   type MarketRiskGrade,
@@ -23,7 +29,7 @@ import {
 } from '@/lib/morpho/oracle-utils';
 import type { Address } from 'viem';
 
-type AdapterType = 'MetaMorphoAdapter' | 'MorphoMarketV1Adapter' | 'Unknown';
+type AdapterType = 'MetaMorphoAdapter' | 'MorphoMarketV1Adapter' | 'MorphoVaultV2Adapter' | 'Unknown';
 
 type GraphAdapter = {
   __typename?: string | null;
@@ -32,6 +38,14 @@ type GraphAdapter = {
   assets: string | null;
   type: AdapterType;
   factory?: { address?: string | null } | null;
+  innerVault?: {
+    address?: string | null;
+    name?: string | null;
+    symbol?: string | null;
+    avgNetApy?: number | null;
+    liquidity?: string | number | null;
+    liquidityUsd?: number | null;
+  } | null;
   metaMorpho?: {
     address?: string | null;
     name?: string | null;
@@ -223,6 +237,16 @@ const VAULT_V2_RISK_QUERY = gql`
           assets
           assetsUsd
           type
+          ... on MorphoVaultV2Adapter {
+            innerVault {
+              address
+              name
+              symbol
+              avgNetApy
+              liquidity
+              liquidityUsd
+            }
+          }
           ... on MetaMorphoAdapter {
             metaMorpho {
               address
@@ -622,7 +646,8 @@ async function computeAdapterRisk(
   chainId: number,
   liquidityAdapterAddress: string | null,
   liquidityMarket: V2LiquidityMarket | null,
-  capItems: GraphCapItem[] | null | undefined
+  capItems: GraphCapItem[] | null | undefined,
+  wrapperVaultAddress: string
 ): Promise<V2AdapterRiskData | null> {
   const allocationUsd = adapter.assetsUsd ?? 0;
   const allocationAssets = adapterAssetsString(adapter.assets);
@@ -634,6 +659,36 @@ async function computeAdapterRisk(
   const isLiquidityAdapter =
     liquidityAdapterAddress !== null &&
     adapter.address.toLowerCase() === liquidityAdapterAddress.toLowerCase();
+
+  if (isMorphoVaultV2Adapter(adapter)) {
+    const underlying = mergeUnderlyingVaultInfo(wrapperVaultAddress, adapter.innerVault);
+    const apy =
+      underlying?.avgNetApy != null && Number.isFinite(underlying.avgNetApy)
+        ? underlying.avgNetApy
+        : null;
+
+    return {
+      adapterAddress: adapter.address,
+      adapterType: 'MorphoVaultV2Adapter',
+      adapterLabel: underlyingVaultLabel(underlying, UNDERLYING_VAULT_FALLBACK),
+      allocationUsd,
+      allocationAssets,
+      riskScore: 0,
+      riskGrade: 'F',
+      apy,
+      markets: [],
+      isLiquidityAdapter,
+      underlyingVault: underlying
+        ? {
+            address: underlying.address,
+            name: underlying.name,
+            symbol: underlying.symbol,
+          }
+        : null,
+      underlyingVaultAddress: underlying?.address ?? null,
+      ...adapterCapFields,
+    };
+  }
 
   if (adapter.__typename === 'MetaMorphoAdapter' && adapter.metaMorpho?.address) {
     const { markets } = await fetchV1VaultMarkets(adapter.metaMorpho.address, chainId);
@@ -824,7 +879,8 @@ export async function GET(
             cfg.chainId,
             liquidityAdapterAddress,
             liquidityMarket,
-            capItems
+            capItems,
+            address
           )
         )
       )

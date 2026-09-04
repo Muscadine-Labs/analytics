@@ -4,7 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { Shield, X, ChevronDown, ChevronRight } from 'lucide-react';
-import { getVaultListCategory, type VaultListCategory } from '@/lib/config/vaults';
+import { groupVaultsByKindAndCategory } from '@/lib/config/vaults';
 import { useVaultList } from '@/lib/hooks/useProtocolStats';
 import { Button } from '@/components/ui/button';
 import { SIDEBAR_NETWORKS } from '@/lib/constants';
@@ -14,22 +14,8 @@ const navBase = [
   { label: 'Overview', href: '/', icon: Shield },
 ];
 
-type VaultSection = { type: VaultListCategory; label: string; vaults: VaultWithData[] };
-
-const SECTION_ORDER: VaultListCategory[] = ['vineyard', 'prime', 'frontier'];
-const SECTION_LABELS: Record<VaultListCategory, string> = {
-  vineyard: 'V2 Vineyard Vaults',
-  prime: 'V2 Prime Vaults',
-  frontier: 'V2 Frontier Vaults',
-};
-
-function getSectionsForNetwork(vaults: VaultWithData[], chainId: number): VaultSection[] {
-  const byChain = vaults.filter((v) => v.chainId === chainId);
-  return SECTION_ORDER.map((type) => ({
-    type,
-    label: SECTION_LABELS[type],
-    vaults: byChain.filter((v) => getVaultListCategory(v.address, v.name) === type),
-  })).filter((section) => section.vaults.length > 0);
+function kindGroupsForNetwork(vaults: VaultWithData[], chainId: number) {
+  return groupVaultsByKindAndCategory(vaults.filter((v) => v.chainId === chainId));
 }
 
 type SidebarProps = {
@@ -109,9 +95,9 @@ export function Sidebar({ onClose }: SidebarProps) {
         </div>
 
         {SIDEBAR_NETWORKS.filter(
-          (network) => getSectionsForNetwork(vaults, network.chainId).length > 0
+          (network) => kindGroupsForNetwork(vaults, network.chainId).length > 0
         ).map((network) => {
-          const sections = getSectionsForNetwork(vaults, network.chainId);
+          const kindGroups = kindGroupsForNetwork(vaults, network.chainId);
           const isExpanded = expandedNetworks.has(network.chainId);
 
           return (
@@ -135,35 +121,40 @@ export function Sidebar({ onClose }: SidebarProps) {
                   {isLoading ? (
                     <div className="px-2 py-2 text-slate-500 dark:text-slate-400">Loading...</div>
                   ) : (
-                    sections.map((section) => (
-                      <div key={section.type} className="space-y-2">
+                    kindGroups.map((kindGroup) => (
+                      <div key={kindGroup.kind} className="space-y-2">
                         <p className="px-2 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                          {section.label}
+                          {kindGroup.label}
                         </p>
-                        <div className="space-y-1">
-                          {section.vaults.map((vault) => {
-                            const href = `/vault/v2/${vault.address}`;
-                            const active = isActive(href);
+                        {kindGroup.categories.map((category) => (
+                          <div key={`${kindGroup.kind}-${category.category}`} className="space-y-1">
+                            <p className="px-2 text-[10px] font-medium text-slate-500 dark:text-slate-400">
+                              {category.label}
+                            </p>
+                            {category.vaults.map((vault) => {
+                              const href = `/vault/v2/${vault.address}`;
+                              const active = isActive(href);
 
-                            return (
-                              <Link
-                                key={vault.address}
-                                href={href}
-                                onClick={handleLinkClick}
-                                className={`flex min-h-[44px] w-full touch-manipulation items-center gap-2 rounded-lg px-2 py-2 text-slate-700 transition hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800 ${
-                                  active
-                                    ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900'
-                                    : ''
-                                }`}
-                              >
-                                <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-blue-100 text-xs font-semibold text-blue-700 dark:bg-blue-900/50 dark:text-blue-300">
-                                  {(vault.asset ?? 'U').slice(0, 1)}
-                                </span>
-                                <span className="truncate min-w-0">{vault.name ?? 'Unknown Vault'}</span>
-                              </Link>
-                            );
-                          })}
-                        </div>
+                              return (
+                                <Link
+                                  key={vault.address}
+                                  href={href}
+                                  onClick={handleLinkClick}
+                                  className={`flex min-h-[44px] w-full touch-manipulation items-center gap-2 rounded-lg px-2 py-2 text-slate-700 transition hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800 ${
+                                    active
+                                      ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900'
+                                      : ''
+                                  }`}
+                                >
+                                  <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-blue-100 text-xs font-semibold text-blue-700 dark:bg-blue-900/50 dark:text-blue-300">
+                                    {(vault.asset ?? 'U').slice(0, 1)}
+                                  </span>
+                                  <span className="truncate min-w-0">{vault.name ?? 'Unknown Vault'}</span>
+                                </Link>
+                              );
+                            })}
+                          </div>
+                        ))}
                       </div>
                     ))
                   )}

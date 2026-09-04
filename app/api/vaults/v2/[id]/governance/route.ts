@@ -10,14 +10,16 @@ import {
   enrichTimelocksWithAbdication,
   isHiddenTimelock,
 } from '@/lib/morpho/vault-v2-timelocks';
+import { isMorphoVaultV2Adapter, mergeUnderlyingVaultInfo } from '@/lib/morpho/vault-v2-adapter';
 
 type GraphAdapter = {
-  __typename?: 'MetaMorphoAdapter' | 'MorphoMarketV1Adapter' | string | null;
+  __typename?: 'MetaMorphoAdapter' | 'MorphoMarketV1Adapter' | 'MorphoVaultV2Adapter' | string | null;
   address?: string | null;
   type?: string | null;
   assets?: number | string | null;
   assetsUsd?: number | null;
   factory?: { address?: string | null } | null;
+  innerVault?: { address?: string | null; name?: string | null; symbol?: string | null } | null;
   metaMorpho?: { address?: string | null; name?: string | null; symbol?: string | null } | null;
 };
 
@@ -109,6 +111,7 @@ export type AdapterInfo = {
   assetsUsd: number | null;
   factoryAddress: string | null;
   metaMorpho?: { address: string | null; name: string | null; symbol: string | null } | null;
+  underlying?: { address: string | null; name: string | null; symbol: string | null } | null;
 };
 
 export type CapInfo = {
@@ -156,6 +159,9 @@ const VAULT_V2_GOVERNANCE_QUERY = gql`
         ... on MetaMorphoAdapter {
           metaMorpho { address name symbol }
         }
+        ... on MorphoVaultV2Adapter {
+          innerVault { address name symbol }
+        }
       }
       liquidityData {
         __typename
@@ -176,6 +182,9 @@ const VAULT_V2_GOVERNANCE_QUERY = gql`
           assetsUsd
           ... on MetaMorphoAdapter {
             metaMorpho { address name symbol }
+          }
+          ... on MorphoVaultV2Adapter {
+            innerVault { address name symbol }
           }
         }
       }
@@ -214,8 +223,16 @@ const VAULT_V2_GOVERNANCE_QUERY = gql`
   }
 `;
 
-function mapAdapter(graph: GraphAdapter | null | undefined): AdapterInfo | null {
+function mapAdapter(
+  graph: GraphAdapter | null | undefined,
+  wrapperVaultAddress?: string
+): AdapterInfo | null {
   if (!graph?.address) return null;
+
+  const underlyingMerged =
+    wrapperVaultAddress && isMorphoVaultV2Adapter(graph)
+      ? mergeUnderlyingVaultInfo(wrapperVaultAddress, graph.innerVault)
+      : null;
 
   return {
     address: graph.address,
@@ -233,6 +250,13 @@ function mapAdapter(graph: GraphAdapter | null | undefined): AdapterInfo | null 
           address: graph.metaMorpho?.address ?? null,
           name: graph.metaMorpho?.name ?? null,
           symbol: graph.metaMorpho?.symbol ?? null,
+        }
+      : null,
+    underlying: isMorphoVaultV2Adapter(graph)
+      ? {
+          address: underlyingMerged?.address ?? graph.innerVault?.address ?? null,
+          name: underlyingMerged?.name ?? graph.innerVault?.name ?? null,
+          symbol: underlyingMerged?.symbol ?? graph.innerVault?.symbol ?? null,
         }
       : null,
   };
@@ -292,6 +316,12 @@ function enrichAdapterCapLabels(
     }
     if (adapter?.metaMorpho?.symbol) {
       return { ...cap, label: adapter.metaMorpho.symbol };
+    }
+    if (adapter?.underlying?.name) {
+      return { ...cap, label: adapter.underlying.name };
+    }
+    if (adapter?.underlying?.symbol) {
+      return { ...cap, label: adapter.underlying.symbol };
     }
     if (adapter?.type === 'MorphoMarketV1Adapter') {
       return {
@@ -471,10 +501,10 @@ export async function GET(
 
     const adapters =
       data.vault.adapters?.items
-        ?.map(mapAdapter)
+        ?.map((a) => mapAdapter(a, address))
         .filter((a): a is AdapterInfo => a !== null) ?? [];
 
-    const liquidityAdapter = mapAdapter(data.vault.liquidityAdapter);
+    const liquidityAdapter = mapAdapter(data.vault.liquidityAdapter, address);
     const liquidityMarket = parseLiquidityMarket(data.vault.liquidityData ?? null);
 
     const vaultAsset = data.vault.asset

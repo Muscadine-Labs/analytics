@@ -88,7 +88,9 @@ export default function VaultsPage() {
   const vaultSummaries = useMemo(() => {
     if (!supplied.data?.vaultAllocations) return [];
 
-    return vaults.map((vault) => {
+    return vaults
+      .filter((vault) => vault.kind !== 'feeWrapper')
+      .map((vault) => {
       const allocation = supplied.data.vaultAllocations.find(
         (va) => va.address.toLowerCase() === vault.address.toLowerCase()
       );

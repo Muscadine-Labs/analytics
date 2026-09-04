@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { vaultAddresses } from '@/lib/config/vaults';
+import { vaultAddresses, withFeeWrapperLabel } from '@/lib/config/vaults';
 import { BASE_CHAIN_ID } from '@/lib/constants';
 import { handleApiError } from '@/lib/utils/error-handler';
 import { createRateLimitMiddleware, RATE_LIMIT_REQUESTS_PER_MINUTE, MINUTE_MS } from '@/lib/utils/rate-limit';
@@ -105,6 +105,17 @@ export async function GET(request: Request) {
         const address = getAddress(cfg.address);
         const chainId = cfg.chainId ?? BASE_CHAIN_ID;
 
+        const depositorsPromise = collectVaultV2DepositorAddresses(address, chainId);
+
+        // Fee wrappers deposit into underlying vaults — skip their TVL to avoid double-count.
+        if (cfg.kind === 'feeWrapper') {
+          const depositors = await depositorsPromise;
+          for (const user of depositors) {
+            uniqueUsers.add(user);
+          }
+          return null;
+        }
+
         const [tvlResult, depositors] = await Promise.all([
           morphoGraphQLClient.request<{
             vaultV2ByAddress?: {
@@ -121,7 +132,7 @@ export async function GET(request: Request) {
               interval: 'DAY',
             },
           }),
-          collectVaultV2DepositorAddresses(address, chainId),
+          depositorsPromise,
         ]);
 
         for (const user of depositors) {
@@ -144,7 +155,10 @@ export async function GET(request: Request) {
               : [];
 
         return {
-          name: vault.name || `Vault ${address.slice(0, 6)}...`,
+          name: withFeeWrapperLabel(
+            vault.name || `Vault ${address.slice(0, 6)}...`,
+            address
+          ),
           address: address.toLowerCase(),
           data,
           currentTvl,

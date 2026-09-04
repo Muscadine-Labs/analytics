@@ -80,11 +80,16 @@ export function VaultV2Adapters({ vaultAddress, preloadedData }: VaultV2Adapters
           adapters.map((adapter) => {
             const isLiquidity = adapter.address.toLowerCase() === liquidityAdapterAddress;
             const isVaultAdapter =
-              adapter.type === 'MetaMorpho' || Boolean(adapter.metaMorpho?.address);
+              adapter.type === 'MetaMorpho' ||
+              Boolean(adapter.metaMorpho?.address) ||
+              Boolean(adapter.underlying?.address) ||
+              adapter.type === 'MorphoVaultV2';
 
-            const title = isVaultAdapter
-              ? adapter.metaMorpho?.name ?? adapter.metaMorpho?.symbol ?? 'Vault Adapter'
-              : 'Morpho Market Adapter';
+            const title = adapter.underlying?.name
+              ?? adapter.underlying?.symbol
+              ?? (isVaultAdapter
+                ? adapter.metaMorpho?.name ?? adapter.metaMorpho?.symbol ?? 'Vault Adapter'
+                : 'Morpho Market Adapter');
 
             return (
               <div
@@ -98,7 +103,11 @@ export function VaultV2Adapters({ vaultAddress, preloadedData }: VaultV2Adapters
                         {title}
                       </p>
                       <Badge variant="outline" className="text-xs">
-                        {isVaultAdapter ? 'Vault Adapter' : 'Market Adapter'}
+                        {adapter.underlying?.address
+                          ? 'Morpho Vault V2'
+                          : isVaultAdapter
+                            ? 'Vault Adapter'
+                            : 'Market Adapter'}
                       </Badge>
                       {isLiquidity && (
                         <Badge className="flex items-center gap-1 bg-emerald-600 text-white">

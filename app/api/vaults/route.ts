@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { vaultAddresses } from '@/lib/config/vaults';
+import { vaultAddresses, withFeeWrapperLabel } from '@/lib/config/vaults';
 import { BPS_PER_ONE, getScanUrlForChain } from '@/lib/constants';
 import { handleApiError } from '@/lib/utils/error-handler';
 import { createRateLimitMiddleware, RATE_LIMIT_REQUESTS_PER_MINUTE, MINUTE_MS } from '@/lib/utils/rate-limit';
@@ -74,16 +74,19 @@ export async function GET(request: Request) {
           return {
             id: vaultData.address,
             address: vaultData.address,
-            name: vaultData.name ?? 'Unknown Vault',
+            name: withFeeWrapperLabel(vaultData.name ?? 'Unknown Vault', vaultData.address),
             symbol: vaultData.symbol ?? vaultData.asset?.symbol ?? 'UNKNOWN',
             asset: vaultData.asset?.symbol ?? 'UNKNOWN',
             chainId: cfg.chainId,
             scanUrl: `${getScanUrlForChain(cfg.chainId)}/address/${vaultData.address}`,
+            listCategory: cfg.listCategory,
+            kind: cfg.kind ?? 'strategy',
+            underlyingAddress: cfg.underlyingAddress ?? null,
             performanceFeeBps:
               vaultData.performanceFee != null
                 ? Math.round(vaultData.performanceFee * BPS_PER_ONE)
                 : null,
-            status: vaultData.listed ? 'active' as const : 'paused' as const,
+            status: cfg.kind === 'feeWrapper' || vaultData.listed ? 'active' as const : 'paused' as const,
             riskTier: 'medium' as const,
             tvl: vaultData.totalAssetsUsd ?? null,
             apy:

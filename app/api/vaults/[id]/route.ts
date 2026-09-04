@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getVaultByAddress } from '@/lib/config/vaults';
+import { getVaultByAddress, withFeeWrapperLabel } from '@/lib/config/vaults';
 import { BPS_PER_ONE, GRAPHQL_TRANSACTIONS_LIMIT, getScanUrlForChain } from '@/lib/constants';
 import { handleApiError, AppError } from '@/lib/utils/error-handler';
 import { createRateLimitMiddleware, RATE_LIMIT_REQUESTS_PER_MINUTE, MINUTE_MS } from '@/lib/utils/rate-limit';
@@ -161,7 +161,9 @@ export async function GET(
       chainId: cfg.chainId,
       scanUrl: `${getScanUrlForChain(cfg.chainId)}/address/${address}`,
       listCategory: cfg.listCategory,
-      name: mv.name ?? 'Unknown Vault',
+      kind: cfg.kind ?? 'strategy',
+      underlyingAddress: cfg.underlyingAddress ?? null,
+      name: withFeeWrapperLabel(mv.name ?? 'Unknown Vault', address),
       symbol: mv.symbol ?? mv.asset?.symbol ?? 'UNKNOWN',
       asset: mv.asset?.symbol ?? 'UNKNOWN',
       assetDecimals: mv.asset?.decimals ?? null,
@@ -176,7 +178,7 @@ export async function GET(
       revenueAllTime: null,
       feesAllTime: null,
       lastHarvest: null,
-      status: mv.listed ? 'active' as const : 'paused' as const,
+      status: cfg.kind === 'feeWrapper' || mv.listed ? 'active' as const : 'paused' as const,
       riskTier: 'medium' as const,
       apyBreakdown: {
         apy: (mv.avgNetApyExcludingRewards ?? mv.maxApy) != null

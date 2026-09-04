@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo } from 'react';
+import Link from 'next/link';
 import { Shield, Zap } from 'lucide-react';
 import { useVaultV2Risk } from '@/lib/hooks/useVaultV2Risk';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -11,6 +12,7 @@ import { formatCompactUSD, formatPercentage } from '@/lib/format/number';
 import type { MarketRiskGrade } from '@/lib/morpho/compute-v1-market-risk';
 import { getGradeColor, getScoreColor } from '@/lib/morpho/market-risk-display';
 import { shouldShowMarketEntry, shouldShowAdapterEntry } from '@/lib/morpho/format-risk';
+import { isMorphoVaultV2Adapter } from '@/lib/morpho/vault-v2-adapter';
 import { MarketRiskCard } from '@/components/morpho/MarketRiskCard';
 
 interface VaultRiskV2Props {
@@ -132,6 +134,8 @@ export function VaultRiskV2({ vaultAddress, preloadedData }: VaultRiskV2Props) {
     );
   }
 
+  const isWrapperVault = data.adapters.some((a) => isMorphoVaultV2Adapter(a));
+
   return (
     <Card>
       <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -141,9 +145,12 @@ export function VaultRiskV2({ vaultAddress, preloadedData }: VaultRiskV2Props) {
             Risk Management
           </CardTitle>
           <p className="text-sm text-slate-500 dark:text-slate-400">
-            Weighted average across adapters, including underlying markets for vault adapters
+            {isWrapperVault
+              ? 'Fee wrappers allocate to a single underlying vault. Market risk is scored on that vault.'
+              : 'Weighted average across adapters, including underlying markets for vault adapters'}
           </p>
         </div>
+        {!isWrapperVault && (
         <div className="flex items-center gap-2">
           <p className={cn('text-xl font-semibold', getScoreColor(data.vaultRiskScore))}>
             {data.vaultRiskScore.toFixed(2)}
@@ -155,6 +162,7 @@ export function VaultRiskV2({ vaultAddress, preloadedData }: VaultRiskV2Props) {
             {data.vaultRiskGrade}
           </Badge>
         </div>
+        )}
       </CardHeader>
       <CardContent className="space-y-6">
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -176,6 +184,7 @@ export function VaultRiskV2({ vaultAddress, preloadedData }: VaultRiskV2Props) {
           {sortedAdapters.map((adapter) => {
             const adapterWeightPct =
               totalAdapterAssets > 0 ? (adapter.allocationUsd / totalAdapterAssets) * 100 : 0;
+            const isWrapperAdapter = isMorphoVaultV2Adapter(adapter);
             const isVaultAdapter = adapter.adapterType === 'MetaMorphoAdapter';
             const markets = [...adapter.markets]
               .filter((m) =>
@@ -196,7 +205,11 @@ export function VaultRiskV2({ vaultAddress, preloadedData }: VaultRiskV2Props) {
                       <div className="flex flex-wrap items-center gap-2">
                         <p className="text-base font-semibold">{adapter.adapterLabel}</p>
                         <Badge variant="outline" className="text-xs">
-                          {isVaultAdapter ? 'Vault Adapter' : 'Market Adapter'}
+                          {isWrapperAdapter
+                            ? 'Morpho Vault V2'
+                            : isVaultAdapter
+                              ? 'Vault Adapter'
+                              : 'Market Adapter'}
                         </Badge>
                         {adapter.isLiquidityAdapter && (
                           <Badge className="flex items-center gap-1 bg-emerald-600 text-white text-xs">
@@ -209,7 +222,20 @@ export function VaultRiskV2({ vaultAddress, preloadedData }: VaultRiskV2Props) {
                         Allocation: {formatCompactUSD(adapter.allocationUsd)} ·{' '}
                         {formatPercentage(adapterWeightPct, 2)} of vault
                       </p>
+                      {isWrapperAdapter && adapter.underlyingVault?.address && (
+                        <p className="text-xs text-slate-500 dark:text-slate-400">
+                          Market risk lives on{' '}
+                          <Link
+                            href={`/vault/v2/${adapter.underlyingVault.address}`}
+                            className="font-medium text-slate-700 underline-offset-2 hover:underline dark:text-slate-200"
+                          >
+                            {adapter.underlyingVault.name || adapter.adapterLabel}
+                          </Link>
+                          .
+                        </p>
+                      )}
                     </div>
+                    {!isWrapperAdapter && (
                     <div className="flex items-center gap-2">
                       <p className={cn('text-lg font-semibold', getScoreColor(adapter.riskScore))}>
                         {adapter.riskScore.toFixed(2)}
@@ -224,6 +250,7 @@ export function VaultRiskV2({ vaultAddress, preloadedData }: VaultRiskV2Props) {
                         {adapter.riskGrade}
                       </Badge>
                     </div>
+                    )}
                   </div>
 
                 </div>

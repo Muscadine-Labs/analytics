@@ -1,5 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 
+import type { VaultKind, VaultListCategory } from '@/lib/config/vaults';
+
 export interface ProtocolStats {
   totalDeposited: number;
   totalFeesGenerated: number;
@@ -29,6 +31,9 @@ export interface VaultWithData {
   address: string;
   chainId: number;
   scanUrl: string;
+  listCategory?: VaultListCategory;
+  kind?: VaultKind;
+  underlyingAddress?: string | null;
   performanceFeeBps: number | null;
   status: 'active' | 'paused' | 'deprecated';
   riskTier: 'low' | 'medium' | 'high';

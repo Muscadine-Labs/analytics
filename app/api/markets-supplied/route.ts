@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { gql } from 'graphql-request';
 import { getAddress } from 'viem';
-import { vaultAddresses } from '@/lib/config/vaults';
+import { getVaultAddressesForProtocolStats } from '@/lib/config/vaults';
 import { BASE_CHAIN_ID } from '@/lib/constants';
 import { morphoGraphQLClient } from '@/lib/morpho/graphql-client';
 import { handleApiError } from '@/lib/utils/error-handler';
@@ -119,7 +119,7 @@ export async function GET(request: Request) {
 
   try {
     const vaultResults = await Promise.all(
-      vaultAddresses.map(async (cfg) => {
+      getVaultAddressesForProtocolStats().map(async (cfg) => {
         const address = getAddress(cfg.address);
         const data = await morphoGraphQLClient.request<{ vault?: GraphVault | null }>(
           MARKETS_SUPPLIED_V2_QUERY,
