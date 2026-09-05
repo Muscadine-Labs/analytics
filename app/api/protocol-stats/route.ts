@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { vaultAddresses, withFeeWrapperLabel } from '@/lib/config/vaults';
+import { vaultAddresses, withFeeWrapperLabel, isFeeWrapperAdapterAddress, getVaultAddressesForProtocolStats } from '@/lib/config/vaults';
 import { BASE_CHAIN_ID } from '@/lib/constants';
 import { handleApiError } from '@/lib/utils/error-handler';
 import { createRateLimitMiddleware, RATE_LIMIT_REQUESTS_PER_MINUTE, MINUTE_MS } from '@/lib/utils/rate-limit';
@@ -111,6 +111,7 @@ export async function GET(request: Request) {
         if (cfg.kind === 'feeWrapper') {
           const depositors = await depositorsPromise;
           for (const user of depositors) {
+            if (isFeeWrapperAdapterAddress(user)) continue;
             uniqueUsers.add(user);
           }
           return null;
@@ -136,6 +137,7 @@ export async function GET(request: Request) {
         ]);
 
         for (const user of depositors) {
+          if (isFeeWrapperAdapterAddress(user)) continue;
           uniqueUsers.add(user);
         }
 
@@ -168,7 +170,7 @@ export async function GET(request: Request) {
 
     const tvlByVault = vaultSeries.filter((v): v is NonNullable<typeof v> => v !== null);
     const totalDeposited = tvlByVault.reduce((sum, v) => sum + v.currentTvl, 0);
-    const activeVaults = vaultAddresses.length;
+    const activeVaults = getVaultAddressesForProtocolStats().length;
 
     const tvlByDate = new Map<string, number>();
     for (const vault of tvlByVault) {

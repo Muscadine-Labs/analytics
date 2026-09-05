@@ -5,6 +5,11 @@ import { handleApiError } from '@/lib/utils/error-handler';
 import { createRateLimitMiddleware, RATE_LIMIT_REQUESTS_PER_MINUTE, MINUTE_MS } from '@/lib/utils/rate-limit';
 import { morphoGraphQLClient } from '@/lib/morpho/graphql-client';
 import { collectVaultV2DepositorAddresses } from '@/lib/morpho/v2-positions';
+import {
+  attachFeeWrappersToUnderlyings,
+  feeWrapperLayerFromGraph,
+  type FeeWrapperLayer,
+} from '@/lib/morpho/fee-wrapper-layer';
 import { gql } from 'graphql-request';
 import { getAddress } from 'viem';
 import { logger } from '@/lib/utils/logger';
@@ -21,12 +26,51 @@ const VAULT_V2_LIST_QUERY = gql`
       listed
       asset { address symbol decimals }
       performanceFee
+      managementFee
       totalAssetsUsd
       avgNetApyExcludingRewards
       avgNetApy
+      adapters(first: 10) {
+        items {
+          __typename
+          address
+          type
+          ... on MorphoVaultV2Adapter {
+            innerVault {
+              address
+              name
+              symbol
+              avgNetApy
+            }
+          }
+        }
+      }
     }
   }
 `;
+
+type ListVaultRow = {
+  id: string;
+  address: string;
+  name: string;
+  symbol: string;
+  asset: string;
+  chainId: number;
+  scanUrl: string;
+  listCategory: (typeof vaultAddresses)[number]['listCategory'];
+  kind: 'strategy' | 'feeWrapper';
+  underlyingAddress: string | null;
+  performanceFeeBps: number | null;
+  status: 'active' | 'paused';
+  riskTier: 'medium';
+  tvl: number | null;
+  apy: number | null;
+  depositors: number;
+  revenueAllTime: null;
+  feesAllTime: null;
+  lastHarvest: null;
+  feeWrapper?: FeeWrapperLayer | null;
+};
 
 export async function GET(request: Request) {
   const rateLimitMiddleware = createRateLimitMiddleware(
@@ -58,9 +102,23 @@ export async function GET(request: Request) {
                 listed?: boolean;
                 asset?: { address?: string; symbol?: string; decimals?: number };
                 performanceFee?: number;
+                managementFee?: number;
                 totalAssetsUsd?: number;
                 avgNetApyExcludingRewards?: number;
                 avgNetApy?: number;
+                adapters?: {
+                  items?: Array<{
+                    __typename?: string | null;
+                    address?: string | null;
+                    type?: string | null;
+                    innerVault?: {
+                      address?: string | null;
+                      name?: string | null;
+                      symbol?: string | null;
+                      avgNetApy?: number | null;
+                    } | null;
+                  } | null> | null;
+                } | null;
               } | null;
             }>(VAULT_V2_LIST_QUERY, { address, chainId: cfg.chainId }),
             collectVaultV2DepositorAddresses(address, cfg.chainId),
@@ -71,7 +129,16 @@ export async function GET(request: Request) {
             return null;
           }
 
-          return {
+          const kind = cfg.kind ?? 'strategy';
+          const feeWrapper =
+            kind === 'feeWrapper'
+              ? feeWrapperLayerFromGraph(vaultData.address, vaultData)
+              : null;
+          if (feeWrapper) {
+            feeWrapper.depositors = depositors.size;
+          }
+
+          const row: ListVaultRow = {
             id: vaultData.address,
             address: vaultData.address,
             name: withFeeWrapperLabel(vaultData.name ?? 'Unknown Vault', vaultData.address),
@@ -80,13 +147,13 @@ export async function GET(request: Request) {
             chainId: cfg.chainId,
             scanUrl: `${getScanUrlForChain(cfg.chainId)}/address/${vaultData.address}`,
             listCategory: cfg.listCategory,
-            kind: cfg.kind ?? 'strategy',
-            underlyingAddress: cfg.underlyingAddress ?? null,
+            kind,
+            underlyingAddress: cfg.underlyingAddress ?? feeWrapper?.innerVault?.address ?? null,
             performanceFeeBps:
               vaultData.performanceFee != null
                 ? Math.round(vaultData.performanceFee * BPS_PER_ONE)
                 : null,
-            status: cfg.kind === 'feeWrapper' || vaultData.listed ? 'active' as const : 'paused' as const,
+            status: kind === 'feeWrapper' || vaultData.listed ? ('active' as const) : ('paused' as const),
             riskTier: 'medium' as const,
             tvl: vaultData.totalAssetsUsd ?? null,
             apy:
@@ -99,7 +166,9 @@ export async function GET(request: Request) {
             revenueAllTime: null,
             feesAllTime: null,
             lastHarvest: null,
+            feeWrapper,
           };
+          return row;
         } catch (error) {
           logger.debug('V2 vault query failed', {
             address,
@@ -110,9 +179,17 @@ export async function GET(request: Request) {
       })
     );
 
-    const merged = results
-      .filter((v): v is NonNullable<typeof v> => v !== null)
-      .filter((v) => configuredAddressSet.has(v.address.toLowerCase()));
+    const fetched = results.filter((v): v is NonNullable<typeof v> => v !== null);
+    const wrapperLayers = new Map<string, FeeWrapperLayer>();
+    for (const row of fetched) {
+      if (row.kind === 'feeWrapper' && row.feeWrapper) {
+        wrapperLayers.set(row.address.toLowerCase(), row.feeWrapper);
+      }
+    }
+
+    const merged = attachFeeWrappersToUnderlyings(fetched, wrapperLayers).filter((v) =>
+      configuredAddressSet.has(v.address.toLowerCase())
+    );
 
     const responseHeaders = new Headers(rateLimitResult.headers);
     responseHeaders.set('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=300');

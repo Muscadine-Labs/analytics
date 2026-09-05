@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 
 import type { VaultKind, VaultListCategory } from '@/lib/config/vaults';
+import type { FeeWrapperLayer } from '@/lib/morpho/fee-wrapper-layer';
 
 export interface ProtocolStats {
   totalDeposited: number;
@@ -45,6 +46,7 @@ export interface VaultWithData {
   revenueAllTime: number | null;
   feesAllTime: number | null;
   lastHarvest: string | null;
+  feeWrapper?: FeeWrapperLayer | null;
 }
 
 export interface VaultDetail extends VaultWithData {

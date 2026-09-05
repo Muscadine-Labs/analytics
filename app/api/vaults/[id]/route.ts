@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getVaultByAddress, withFeeWrapperLabel } from '@/lib/config/vaults';
+import { getFeeWrapperForUnderlying, getVaultByAddress, withFeeWrapperLabel } from '@/lib/config/vaults';
 import { BPS_PER_ONE, GRAPHQL_TRANSACTIONS_LIMIT, getScanUrlForChain } from '@/lib/constants';
 import { handleApiError, AppError } from '@/lib/utils/error-handler';
 import { createRateLimitMiddleware, RATE_LIMIT_REQUESTS_PER_MINUTE, MINUTE_MS } from '@/lib/utils/rate-limit';
 import { morphoGraphQLClient } from '@/lib/morpho/graphql-client';
 import { collectVaultV2DepositorAddresses } from '@/lib/morpho/v2-positions';
+import { fetchFeeWrapperLayer } from '@/lib/morpho/fee-wrapper-layer';
 import { gql } from 'graphql-request';
 import { getAddress, isAddress } from 'viem';
 
@@ -138,8 +139,24 @@ export async function GET(
       throw new AppError('Vault not found in Morpho API', 404, 'VAULT_NOT_FOUND');
     }
 
-    const depositorAddresses = await collectVaultV2DepositorAddresses(address, cfg.chainId);
+    const wrapperCfg =
+      cfg.kind === 'feeWrapper' ? null : getFeeWrapperForUnderlying(address);
+
+    const [depositorAddresses, feeWrapperLayer, wrapperDepositors] = await Promise.all([
+      collectVaultV2DepositorAddresses(address, cfg.chainId),
+      wrapperCfg
+        ? fetchFeeWrapperLayer(wrapperCfg.address, wrapperCfg.chainId)
+        : Promise.resolve(null),
+      wrapperCfg
+        ? collectVaultV2DepositorAddresses(getAddress(wrapperCfg.address), wrapperCfg.chainId)
+        : Promise.resolve(null),
+    ]);
     const txs = (data.txs?.items ?? []).filter((t): t is TxItem => t !== null);
+
+    const feeWrapper =
+      feeWrapperLayer && wrapperDepositors
+        ? { ...feeWrapperLayer, depositors: wrapperDepositors.size }
+        : feeWrapperLayer;
 
     const tvlUsd = mv.totalAssetsUsd ?? null;
     const totalAssetsRaw = mv.totalAssets != null ? String(mv.totalAssets) : null;
@@ -222,6 +239,7 @@ export async function GET(
         maxWithdrawal: null,
         strategyNotes: '',
       },
+      feeWrapper,
     };
 
     const responseHeaders = new Headers(rateLimitResult.headers);

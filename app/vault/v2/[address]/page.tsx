@@ -1,18 +1,20 @@
 'use client';
 
+import { useEffect } from 'react';
 import Link from 'next/link';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import { Shield } from 'lucide-react';
 import { getScanUrlForChain, getScanNameForChain } from '@/lib/constants';
 import { useVaultV2Complete } from '@/lib/hooks/useVaultV2Complete';
 import {
   getVaultByAddress,
   getVaultListCategory,
+  getVaultPageHref,
   isFeeWrapperVault,
-  resolveUnderlyingVaultAddress,
 } from '@/lib/config/vaults';
 import { AppShell } from '@/components/layout/AppShell';
 import { KpiCard } from '@/components/KpiCard';
+import { VaultOverviewPair } from '@/components/morpho/FeeWrapperPanel';
 import { VaultRiskV2 } from '@/components/morpho/VaultRiskV2';
 import { VaultV2Roles } from '@/components/morpho/VaultV2Roles';
 import { VaultV2Adapters } from '@/components/morpho/VaultV2Adapters';
@@ -28,12 +30,26 @@ import { formatTokenAmount, formatCompactUSD } from '@/lib/format/number';
 
 export default function V2VaultPage() {
   const params = useParams();
+  const router = useRouter();
   const address = params.address as string;
-  // Load all data in parallel - hooks will fetch independently
-  // Only block on vault data loading (needed for basic info)
-  const { vault, risk, governance, vaultIsLoading, isError, error } = useVaultV2Complete(address);
-  // Other data (risk, governance) will load in parallel via their own hooks
-  if (vaultIsLoading) {
+  const requestedCfg = getVaultByAddress(address);
+  const canonicalHref =
+    requestedCfg && isFeeWrapperVault(requestedCfg) ? getVaultPageHref(address) : null;
+  const shouldRedirect =
+    canonicalHref != null &&
+    canonicalHref.toLowerCase() !== `/vault/v2/${address}`.toLowerCase();
+
+  useEffect(() => {
+    if (shouldRedirect && canonicalHref) {
+      router.replace(canonicalHref);
+    }
+  }, [canonicalHref, router, shouldRedirect]);
+
+  const { vault, risk, governance, vaultIsLoading, isError, error } = useVaultV2Complete(
+    shouldRedirect ? null : address
+  );
+
+  if (shouldRedirect || vaultIsLoading) {
     return (
       <AppShell title="Loading vault..." description="Fetching vault data">
         <div className="space-y-6">
@@ -86,28 +102,16 @@ export default function V2VaultPage() {
     );
   }
 
-  const cfg = getVaultByAddress(vault.address);
-  const isWrapper = isFeeWrapperVault(cfg);
   const category = getVaultListCategory(vault.address, vault.name);
-  const vaultBadge = isWrapper
-    ? category === 'frontier'
-      ? 'V2 Frontier Wrapper'
-      : 'V2 Prime Wrapper'
-    : category === 'prime'
+  const vaultBadge =
+    category === 'prime'
       ? 'V2 Prime'
       : category === 'vineyard'
         ? 'V2 Vineyard'
         : category === 'frontier'
           ? 'V2 Frontier'
           : 'V2';
-  const wrapperAdapter = risk?.adapters.find((a) => a.adapterType === 'MorphoVaultV2Adapter');
-  const underlyingAddress = isWrapper
-    ? resolveUnderlyingVaultAddress(vault.address, wrapperAdapter?.underlyingVault?.address)
-    : null;
-  const underlyingLabel =
-    wrapperAdapter?.underlyingVault?.name ??
-    wrapperAdapter?.adapterLabel ??
-    'Underlying vault';
+  const feeWrapper = vault.feeWrapper ?? null;
 
   const morphoUiUrl = vault.address 
     ? `https://app.morpho.org/base/vault/${vault.address.toLowerCase()}`
@@ -168,11 +172,13 @@ export default function V2VaultPage() {
   ) : undefined;
 
   const performanceFee =
+    feeWrapper?.performanceFeePercent ??
     vault.parameters?.performanceFeePercent ??
     (vault.parameters?.performanceFeeBps != null
       ? vault.parameters.performanceFeeBps / 100
       : null);
   const managementFee =
+    feeWrapper?.managementFeePercent ??
     vault.parameters?.managementFeePercent ??
     (vault.parameters?.managementFeeBps != null
       ? vault.parameters.managementFeeBps / 100
@@ -200,78 +206,70 @@ export default function V2VaultPage() {
           <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0 scrollbar-hide sm:overflow-visible">
             <TabsList className="inline-flex w-auto min-w-full sm:min-w-0 sm:w-full justify-start gap-1">
               <TabsTrigger value="overview" className="sm:flex-1 flex-shrink-0 min-w-fit">Overview</TabsTrigger>
-              {!isWrapper && (
-                <TabsTrigger value="risk" className="sm:flex-1 flex-shrink-0 min-w-fit">
-                  <span className="hidden sm:inline">Risk Management</span>
-                  <span className="sm:hidden">Risk</span>
-                </TabsTrigger>
-              )}
-              {!isWrapper && (
-                <TabsTrigger value="roles" className="sm:flex-1 flex-shrink-0 min-w-fit">Roles</TabsTrigger>
-              )}
-              {!isWrapper && (
-                <TabsTrigger value="adapters" className="sm:flex-1 flex-shrink-0 min-w-fit">Adapters</TabsTrigger>
-              )}
+              <TabsTrigger value="risk" className="sm:flex-1 flex-shrink-0 min-w-fit">
+                <span className="hidden sm:inline">Risk Management</span>
+                <span className="sm:hidden">Risk</span>
+              </TabsTrigger>
+              <TabsTrigger value="roles" className="sm:flex-1 flex-shrink-0 min-w-fit">Roles</TabsTrigger>
+              <TabsTrigger value="adapters" className="sm:flex-1 flex-shrink-0 min-w-fit">Adapters</TabsTrigger>
               <TabsTrigger value="allocations" className="sm:flex-1 flex-shrink-0 min-w-fit">Allocations</TabsTrigger>
-              {!isWrapper && (
-                <TabsTrigger value="caps" className="sm:flex-1 flex-shrink-0 min-w-fit">Caps</TabsTrigger>
-              )}
-              {!isWrapper && (
-                <TabsTrigger value="timelocks" className="sm:flex-1 flex-shrink-0 min-w-fit">Timelocks</TabsTrigger>
-              )}
+              <TabsTrigger value="caps" className="sm:flex-1 flex-shrink-0 min-w-fit">Caps</TabsTrigger>
+              <TabsTrigger value="timelocks" className="sm:flex-1 flex-shrink-0 min-w-fit">Timelocks</TabsTrigger>
             </TabsList>
           </div>
 
-          <TabsContent value="overview" className="space-y-6">
-            <Card>
-              <CardContent className="pt-6">
-                <div className="flex flex-col gap-3">
-                  <div>
-                    <a
-                      href={morphoUiUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-xl sm:text-2xl font-semibold text-slate-900 dark:text-slate-100 hover:text-blue-600 dark:hover:text-blue-400 transition-colors break-words"
-                    >
-                      {vaultName}
-                    </a>
-                    {isWrapper && (
-                      <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                        Fee wrapper — deposits allocate only to the underlying vault.
-                      </p>
-                    )}
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Badge variant="outline" className="text-sm">
-                      {vaultSymbol}
-                    </Badge>
-                    <Badge variant="outline" className="text-sm">
-                      {vaultAsset}
-                    </Badge>
-                  </div>
+          <TabsContent value="overview" className="space-y-4">
+            <Card className="gap-0 py-4">
+              <CardContent className="px-4">
+                <div className="flex flex-wrap items-center gap-2">
+                  <a
+                    href={morphoUiUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-lg font-semibold text-slate-900 dark:text-slate-100 hover:text-blue-600 dark:hover:text-blue-400 transition-colors break-words"
+                  >
+                    {vaultName}
+                  </a>
+                  <Badge variant="outline" className="text-xs">
+                    {vaultSymbol}
+                  </Badge>
+                  <Badge variant="outline" className="text-xs">
+                    {vaultAsset}
+                  </Badge>
                 </div>
               </CardContent>
             </Card>
 
-            {isWrapper && underlyingAddress && (
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-base">Underlying vault</CardTitle>
-                </CardHeader>
-                <CardContent className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <p className="text-sm text-slate-600 dark:text-slate-400">
-                    {underlyingLabel} holds the strategy allocations and market risk.
-                  </p>
-                  <Button asChild className="w-full sm:w-auto">
-                    <Link href={`/vault/v2/${underlyingAddress}`}>View underlying vault</Link>
-                  </Button>
-                </CardContent>
-              </Card>
-            )}
-
-            <div className={`grid grid-cols-1 gap-4 ${isWrapper ? 'md:grid-cols-2 lg:grid-cols-3' : 'md:grid-cols-3'}`}>
-              <KpiCard title="TVL" value={vault.tvl} subtitle={tvlSubtitle} format="usd" />
-              {!isWrapper && (
+            {feeWrapper ? (
+              <VaultOverviewPair
+                underlying={{
+                  tvl: vault.tvl,
+                  tvlUnderlying: vault.totalAssets ?? null,
+                  liquidityUsd: risk?.liquidityUsd ?? null,
+                  liquidityUnderlying: risk?.liquidityBreakdown?.totalAssets ?? null,
+                  apy: vault.apy,
+                  depositors: vault.depositors,
+                  depositorHint: 'Vault holders',
+                  performanceFeePercent:
+                    vault.parameters?.performanceFeePercent ??
+                    (vault.parameters?.performanceFeeBps != null
+                      ? vault.parameters.performanceFeeBps / 100
+                      : null),
+                  managementFeePercent:
+                    vault.parameters?.managementFeePercent ??
+                    (vault.parameters?.managementFeeBps != null
+                      ? vault.parameters.managementFeeBps / 100
+                      : null),
+                }}
+                wrapper={feeWrapper}
+                chainId={vault.chainId}
+                underlyingVaultName={vaultName}
+                assetSymbol={vaultAsset}
+                assetDecimals={vault.assetDecimals ?? null}
+              />
+            ) : (
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                <KpiCard title="TVL" value={vault.tvl} subtitle={tvlSubtitle} format="usd" />
                 <KpiCard
                   title="Liquidity"
                   value={risk?.liquidityUsd ?? null}
@@ -281,57 +279,47 @@ export default function V2VaultPage() {
                   infoTooltip={liquidityBreakdownTooltip}
                   infoTooltipLabel="Liquidity breakdown"
                 />
-              )}
-              <KpiCard title="APY" value={vault.apy} subtitle="Current yield rate" format="percentage" />
-              <KpiCard title="Depositors" value={vault.depositors} subtitle="Total depositors" format="number" />
-              <KpiCard
-                title="Performance Fee"
-                value={performanceFee}
-                subtitle="Fee on yield generated"
-                format="percentage"
-              />
-              <KpiCard
-                title="Management Fee"
-                value={managementFee}
-                subtitle="Annual fee on AUM"
-                format="percentage"
-              />
-            </div>
+                <KpiCard title="APY" value={vault.apy} subtitle="Current yield rate" format="percentage" />
+                <KpiCard title="Depositors" value={vault.depositors} subtitle="Vault holders" format="number" />
+                <KpiCard
+                  title="Performance Fee"
+                  value={performanceFee}
+                  subtitle="Fee on yield generated"
+                  format="percentage"
+                />
+                <KpiCard
+                  title="Management Fee"
+                  value={managementFee}
+                  subtitle="Annual fee on AUM"
+                  format="percentage"
+                />
+              </div>
+            )}
           </TabsContent>
 
-          {!isWrapper && (
-            <TabsContent value="risk" className="space-y-4">
-              <VaultRiskV2 vaultAddress={vault.address} preloadedData={risk} />
-            </TabsContent>
-          )}
+          <TabsContent value="risk" className="space-y-4">
+            <VaultRiskV2 vaultAddress={vault.address} preloadedData={risk} />
+          </TabsContent>
 
-          {!isWrapper && (
-            <TabsContent value="roles">
-              <VaultV2Roles vaultAddress={vault.address} preloadedData={governance} />
-            </TabsContent>
-          )}
+          <TabsContent value="roles">
+            <VaultV2Roles vaultAddress={vault.address} preloadedData={governance} />
+          </TabsContent>
 
-          {!isWrapper && (
-            <TabsContent value="adapters">
-              <VaultV2Adapters vaultAddress={vault.address} preloadedData={governance} />
-            </TabsContent>
-          )}
+          <TabsContent value="adapters">
+            <VaultV2Adapters vaultAddress={vault.address} preloadedData={governance} />
+          </TabsContent>
 
           <TabsContent value="allocations">
             <VaultV2Allocations vaultAddress={vault.address} preloadedRisk={risk} />
           </TabsContent>
 
-          {!isWrapper && (
-            <TabsContent value="caps">
-              <VaultV2Caps vaultAddress={vault.address} preloadedData={governance} />
-            </TabsContent>
-          )}
+          <TabsContent value="caps">
+            <VaultV2Caps vaultAddress={vault.address} preloadedData={governance} />
+          </TabsContent>
 
-          {!isWrapper && (
-            <TabsContent value="timelocks">
-              <VaultV2Timelocks vaultAddress={vault.address} preloadedData={governance} />
-            </TabsContent>
-          )}
+          <TabsContent value="timelocks">
+            <VaultV2Timelocks vaultAddress={vault.address} preloadedData={governance} />
+          </TabsContent>
         </Tabs>
       </div>
     </AppShell>

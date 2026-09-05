@@ -15,6 +15,11 @@ export interface VaultAddressConfig {
   kind?: VaultKind;
   /** Child Vault V2 when `kind` is `feeWrapper`. GraphQL fallback for `innerVault`. */
   underlyingAddress?: string;
+  /**
+   * MorphoVaultV2Adapter that deposits into the underlying vault. The adapter
+   * — not the wrapper vault contract — is the ERC-4626 holder of the child.
+   */
+  adapterAddress?: string;
 }
 
 const VAULT_USDC_PRIME =
@@ -25,6 +30,12 @@ const VAULT_CBBTC_PRIME =
   process.env.NEXT_PUBLIC_VAULT_CBBTC_V2 || '0x99dcd0d75822ba398f13b2a8852b07c7e137ec70';
 const VAULT_USDC_FRONTIER =
   process.env.NEXT_PUBLIC_VAULT_USDC_FRONTIER_V2 || '0x314fD07319ef645bA7D548915CCd91F4788A1839';
+
+/** MorphoVaultV2Adapter for each fee wrapper (holder of the underlying vault). */
+const ADAPTER_USDC_PRIME_WRAPPER = '0x8B6E43CCE1961D3671a39Fe8D9E711E69ddD74ce';
+const ADAPTER_USDC_FRONTIER_WRAPPER = '0x5b211DA4Cd92cfb9CCCFbd1De78289955EB236CD';
+const ADAPTER_WETH_PRIME_WRAPPER = '0xf691616Dd2cF85c9cA9fa32bdFf00f5cD92BAd81';
+const ADAPTER_CBBTC_PRIME_WRAPPER = '0xa3b90423FD6f70B9f4A424dEBfB27ac502ac1464';
 
 export const vaultAddresses: VaultAddressConfig[] = [
   {
@@ -55,6 +66,7 @@ export const vaultAddresses: VaultAddressConfig[] = [
     listCategory: 'prime',
     kind: 'feeWrapper',
     underlyingAddress: VAULT_USDC_PRIME,
+    adapterAddress: ADAPTER_USDC_PRIME_WRAPPER,
   },
   {
     address:
@@ -64,6 +76,7 @@ export const vaultAddresses: VaultAddressConfig[] = [
     listCategory: 'prime',
     kind: 'feeWrapper',
     underlyingAddress: VAULT_WETH_PRIME,
+    adapterAddress: ADAPTER_WETH_PRIME_WRAPPER,
   },
   {
     address:
@@ -73,6 +86,7 @@ export const vaultAddresses: VaultAddressConfig[] = [
     listCategory: 'prime',
     kind: 'feeWrapper',
     underlyingAddress: VAULT_CBBTC_PRIME,
+    adapterAddress: ADAPTER_CBBTC_PRIME_WRAPPER,
   },
   {
     address:
@@ -82,6 +96,7 @@ export const vaultAddresses: VaultAddressConfig[] = [
     listCategory: 'frontier',
     kind: 'feeWrapper',
     underlyingAddress: VAULT_USDC_FRONTIER,
+    adapterAddress: ADAPTER_USDC_FRONTIER_WRAPPER,
   },
 ];
 
@@ -121,6 +136,31 @@ export function resolveUnderlyingVaultAddress(
 ): string | null {
   if (graphQlAddress) return graphQlAddress;
   return getVaultByAddress(wrapperAddress)?.underlyingAddress ?? null;
+}
+
+/** Fee wrapper immutably bound to this strategy vault, if any. */
+export function getFeeWrapperForUnderlying(
+  underlyingAddress: string
+): VaultAddressConfig | undefined {
+  const key = underlyingAddress.toLowerCase();
+  return vaultAddresses.find(
+    (v) => v.kind === 'feeWrapper' && v.underlyingAddress?.toLowerCase() === key
+  );
+}
+
+/** True for MorphoVaultV2Adapter contracts that hold the underlying vault. */
+export function isFeeWrapperAdapterAddress(address: string): boolean {
+  const key = address.toLowerCase();
+  return vaultAddresses.some((v) => v.adapterAddress?.toLowerCase() === key);
+}
+
+/** Canonical vault page — wrappers redirect to their underlying. */
+export function getVaultPageHref(address: string): string {
+  const cfg = getVaultByAddress(address);
+  if (cfg?.kind === 'feeWrapper' && cfg.underlyingAddress) {
+    return `/vault/v2/${cfg.underlyingAddress}`;
+  }
+  return `/vault/v2/${address}`;
 }
 
 /**
@@ -225,6 +265,27 @@ export function groupVaultsByKindAndCategory<T extends GroupableVault>(
       kind,
       label: VAULT_LIST_KIND_LABEL[kind],
       categories,
+    });
+  }
+  return groups;
+}
+
+/** Strategy vaults only, grouped Prime / Frontier / Vineyard — one page per vault. */
+export function groupVaultsByCategory<T extends GroupableVault>(
+  vaults: readonly T[]
+): VaultListCategoryGroup<T>[] {
+  const groups: VaultListCategoryGroup<T>[] = [];
+  for (const category of VAULT_LIST_CATEGORY_ORDER) {
+    const matched = vaults.filter(
+      (v) =>
+        getVaultListKind(v) !== 'wrapper' &&
+        getVaultListCategory(v.address, v.name) === category
+    );
+    if (matched.length === 0) continue;
+    groups.push({
+      category,
+      label: CATEGORY_LABEL[category],
+      vaults: matched,
     });
   }
   return groups;
