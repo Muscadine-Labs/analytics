@@ -58,7 +58,7 @@ export function VaultOverviewPair({
 
   return (
     <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-      <OverviewCard title="Underlying">
+      <OverviewCard title="Underlying Muscadine Vault">
         <CompactStats
           stats={underlying}
           assetSymbol={assetSymbol}
@@ -67,7 +67,7 @@ export function VaultOverviewPair({
       </OverviewCard>
 
       <OverviewCard
-        title="Retail wrapper"
+        title="Muscadine Wrapper Vault"
         subtitle={
           <AddressBadge
             address={wrapper.address}
