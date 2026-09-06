@@ -1,8 +1,8 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
-import { Analytics } from "@vercel/analytics/next";
 import "./globals.css";
 import { Providers } from "./providers";
+import DeferredAnalytics from "@/components/DeferredAnalytics";
 import { logEnvValidation } from "@/lib/utils/env-validation";
 
 // Validate environment variables at startup
@@ -53,7 +53,7 @@ export default function RootLayout({
         <Providers>
           {children}
         </Providers>
-        <Analytics />
+        <DeferredAnalytics />
       </body>
     </html>
   );
