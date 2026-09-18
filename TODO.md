@@ -1,5 +1,3 @@
-*TO work on today:
+*TODO:
 
-**To work on another day:
-
-- Upgrade risk management calcuations, only if the repo as updated it https://github.com/Muscadine-Labs/curator. review the four sectors: Liquidation Headroom, Utilization, Coverage Ratio, Oracle Freshness. Utilization and oracle freshness are needed. Are there better types of variables to manager risk or are those the best options and best parameters? Review for V1 and V2 vaults.
+- Review defillama docs to make sure we dont use any old api's, they have migrations to v2. Review morpho graph ql and apis's for any depreciating apis also.
