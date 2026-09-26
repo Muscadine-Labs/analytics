@@ -37,14 +37,20 @@ export async function enrichTimelocksWithAbdication(
 ): Promise<EnrichedTimelockEntry[]> {
   if (timelocks.length === 0) return [];
 
-  const abdicatedResults = await multicallRead<boolean>(
-    timelocks.map((t) => ({
-      address: vaultAddress,
-      abi: VAULT_V2_ABDICATED_ABI,
-      functionName: 'abdicated',
-      args: [normalizeSelector(t.selector)],
-    }))
-  );
+  const calls = timelocks.map((t) => ({
+    address: vaultAddress,
+    abi: VAULT_V2_ABDICATED_ABI,
+    functionName: 'abdicated' as const,
+    args: [normalizeSelector(t.selector)],
+  }));
+
+  let abdicatedResults = await multicallRead<boolean>(calls);
+  if (abdicatedResults.some((result) => result == null)) {
+    abdicatedResults = await multicallRead<boolean>(calls);
+  }
+  if (abdicatedResults.some((result) => result == null)) {
+    throw new Error('Failed to read timelock abdication status');
+  }
 
   return timelocks.map((t, i) => ({
     ...t,

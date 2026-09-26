@@ -4,6 +4,7 @@ import type { VaultV2GovernanceResponse } from '@/app/api/vaults/v2/[id]/governa
 async function fetchVaultV2Governance(vaultAddress: string): Promise<VaultV2GovernanceResponse> {
   const res = await fetch(`/api/vaults/v2/${vaultAddress}/governance`, {
     credentials: 'omit',
+    cache: 'no-store',
   });
 
   if (!res.ok) {

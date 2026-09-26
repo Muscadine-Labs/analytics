@@ -42,6 +42,7 @@ export function VaultOverviewPair({
   wrapper,
   chainId,
   underlyingVaultName,
+  underlyingAddress,
   assetSymbol,
   assetDecimals,
 }: {
@@ -49,6 +50,7 @@ export function VaultOverviewPair({
   wrapper: FeeWrapperLayer;
   chainId: number;
   underlyingVaultName: string;
+  underlyingAddress: string;
   assetSymbol: string;
   assetDecimals: number | null;
 }) {
@@ -58,12 +60,25 @@ export function VaultOverviewPair({
 
   return (
     <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-      <OverviewCard title="Underlying Muscadine Vault">
+      <OverviewCard
+        title={strategyLabel}
+        subtitle={
+          <AddressBadge
+            address={underlyingAddress}
+            scanUrl={`${scanBase}/address/${underlyingAddress}`}
+            truncate
+          />
+        }
+      >
         <CompactStats
           stats={underlying}
           assetSymbol={assetSymbol}
           assetDecimals={assetDecimals}
         />
+        <p className="mt-3 border-t border-border/60 pt-3 text-xs leading-relaxed text-muted-foreground">
+          Deposits are limited to approved addresses. The wrapper vault is the public route into this
+          strategy.
+        </p>
       </OverviewCard>
 
       <OverviewCard

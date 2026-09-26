@@ -264,6 +264,7 @@ export default function V2VaultPage() {
                 wrapper={feeWrapper}
                 chainId={vault.chainId}
                 underlyingVaultName={vaultName}
+                underlyingAddress={vault.address}
                 assetSymbol={vaultAsset}
                 assetDecimals={vault.assetDecimals ?? null}
               />

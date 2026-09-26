@@ -24,9 +24,9 @@ function formatDuration(seconds: number): string {
 
 export function VaultV2Timelocks({ vaultAddress, preloadedData }: VaultV2TimelocksProps) {
   const { data: fetchedData, isLoading, error } = useVaultV2Governance(vaultAddress);
-  const data = preloadedData ?? fetchedData;
+  const data = fetchedData ?? preloadedData;
 
-  if (!preloadedData && isLoading) {
+  if (!data && isLoading) {
     return (
       <Card>
         <CardHeader>

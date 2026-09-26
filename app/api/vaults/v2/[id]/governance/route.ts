@@ -126,6 +126,8 @@ export type CapInfo = {
   label?: string | null;
   loanSymbol?: string | null;
   collateralSymbol?: string | null;
+  /** Morpho Blue LLTV, 1e18 scale. Distinguishes markets that share a pair. */
+  lltv?: string | null;
   amountSymbol?: string | null;
   amountDecimals?: number | null;
 };
@@ -203,6 +205,7 @@ const VAULT_V2_GOVERNANCE_QUERY = gql`
               adapterAddress
               market {
                 marketId
+                lltv
                 loanAsset { symbol decimals }
                 collateralAsset { symbol decimals }
               }
@@ -291,6 +294,11 @@ function parseLiquidityMarket(
   };
 }
 
+function isMorphoBlueAdapterType(type: string | null | undefined): boolean {
+  const normalized = type?.toLowerCase() ?? '';
+  return normalized === 'morphomarketv1' || normalized === 'morphomarketv1adapter';
+}
+
 function enrichAdapterCapLabels(
   caps: CapInfo[],
   adapters: AdapterInfo[],
@@ -303,13 +311,17 @@ function enrichAdapterCapLabels(
     if (cap.type !== 'Adapter' || !cap.adapterAddress) return cap;
 
     const addr = cap.adapterAddress.toLowerCase();
-    if (liquidityAddress && addr === liquidityAddress && liquidityMarket?.label) {
-      return { ...cap, label: liquidityMarket.label };
-    }
-
     const adapter =
       adapters.find((a) => a.address.toLowerCase() === addr) ??
       (liquidityAddress === addr ? liquidityAdapter : null);
+
+    if (isMorphoBlueAdapterType(adapter?.type)) {
+      return { ...cap, label: 'Morpho Blue Adapter' };
+    }
+
+    if (liquidityAddress && addr === liquidityAddress && liquidityMarket?.label) {
+      return { ...cap, label: liquidityMarket.label };
+    }
 
     if (adapter?.metaMorpho?.name) {
       return { ...cap, label: adapter.metaMorpho.name };
@@ -322,12 +334,6 @@ function enrichAdapterCapLabels(
     }
     if (adapter?.underlying?.symbol) {
       return { ...cap, label: adapter.underlying.symbol };
-    }
-    if (adapter?.type === 'MorphoMarketV1Adapter') {
-      return {
-        ...cap,
-        label: liquidityMarket?.label ?? 'Morpho Market Adapter',
-      };
     }
 
     return cap;
@@ -390,6 +396,7 @@ function mapCap(
       adapterAddress?: string | null;
       market?: {
         marketId?: string | null;
+        lltv?: string | number | null;
         loanAsset?: { symbol?: string | null; decimals?: number | null } | null;
         collateralAsset?: { symbol?: string | null; decimals?: number | null } | null;
       } | null;
@@ -410,6 +417,10 @@ function mapCap(
       label,
       loanSymbol,
       collateralSymbol,
+      lltv:
+        marketData?.market?.lltv == null
+          ? null
+          : String(marketData.market.lltv),
       amountSymbol: loanSymbol ?? vaultAsset?.symbol ?? null,
       amountDecimals: loan?.decimals ?? vaultAsset?.decimals ?? null,
     };
@@ -560,7 +571,7 @@ export async function GET(
     };
 
     const responseHeaders = new Headers(rateLimitResult.headers);
-    responseHeaders.set('Cache-Control', 'public, s-maxage=120, stale-while-revalidate=300');
+    responseHeaders.set('Cache-Control', 'private, no-store');
 
     return NextResponse.json(response, { headers: responseHeaders });
   } catch (error) {
