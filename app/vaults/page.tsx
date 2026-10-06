@@ -29,6 +29,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { RatingBadge } from '@/components/morpho/RatingBadge';
 import { formatCompactUSD, formatPercentage } from '@/lib/format/number';
 import { useVaultList } from '@/lib/hooks/useProtocolStats';
+import { calculateVaultSummaryMetrics } from '@/lib/morpho/vault-summary';
 import { BASE_CHAIN_ID, getMorphoMarketUrl } from '@/lib/constants';
 import { AppShell } from '@/components/layout/AppShell';
 
@@ -101,16 +102,11 @@ export default function VaultsPage() {
         allocation?.allocations.some((a) => a.marketKey === m.uniqueKey)
       );
 
-      const avgUtilization =
-        vaultMarkets.length > 0
-          ? vaultMarkets.reduce((sum, m) => sum + (m.state?.utilization ?? 0), 0) / vaultMarkets.length
-          : 0;
-
-      const totalRewardApr = vaultMarkets.reduce((sum, m) => {
-        const rewards = m.state?.rewards ?? [];
-        const rewardApr = rewards.reduce((s, r) => s + (r.supplyApr ?? 0), 0);
-        return sum + rewardApr;
-      }, 0);
+      const allocationShare = allocation?.allocations ?? [];
+      const { weightedUtilization, weightedRewardApr } = calculateVaultSummaryMetrics(
+        allocationShare,
+        mergedMarkets
+      );
 
       const avgRating =
         vaultMarkets.filter((m) => m.rating).length > 0
@@ -121,9 +117,9 @@ export default function VaultsPage() {
       return {
         vault,
         totalSupplied,
-        allocationShare: allocation?.allocations ?? [],
-        avgUtilization,
-        totalRewardApr,
+        allocationShare,
+        weightedUtilization,
+        weightedRewardApr,
         avgRating,
         markets: vaultMarkets,
       };
@@ -208,12 +204,16 @@ export default function VaultsPage() {
                               }
                             />
                             <StatCard
-                              label="Avg Utilization"
-                              value={formatPercentage(vaultSummary.avgUtilization * 100, 2)}
+                              label="Weighted Utilization"
+                              value={
+                                vaultSummary.weightedUtilization == null
+                                  ? '—'
+                                  : formatPercentage(vaultSummary.weightedUtilization * 100, 2)
+                              }
                             />
                             <StatCard
                               label="Reward APR"
-                              value={formatPercentage(vaultSummary.totalRewardApr, 2)}
+                              value={formatPercentage(vaultSummary.weightedRewardApr, 2)}
                               className="text-green-600 dark:text-green-400"
                             />
                             <StatCard label="Markets" value={vaultSummary.markets.length.toString()} />

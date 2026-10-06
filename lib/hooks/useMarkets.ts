@@ -15,7 +15,8 @@ export interface SuppliedMarket {
     supplyApy?: number;
     borrowApy?: number;
     rewards?: Array<{
-      supplyApr?: number;
+      /** Reward APR in percentage points, not a fraction. */
+      supplyAprPercent?: number;
     }>;
   };
 }
@@ -25,6 +26,7 @@ export interface VaultAllocation {
   totalSupplyUsd: number;
   allocations: Array<{
     marketKey: string;
+    supplyUsd: number;
   }>;
 }
 
@@ -54,4 +56,3 @@ export function useMarketsSupplied() {
     queryFn: fetchMarketsSupplied,
   });
 }
-

@@ -4,6 +4,7 @@ import { getAddress } from 'viem';
 import { getVaultAddressesForProtocolStats } from '@/lib/config/vaults';
 import { BASE_CHAIN_ID } from '@/lib/constants';
 import { morphoGraphQLClient } from '@/lib/morpho/graphql-client';
+import { supplyAprFractionToPercentagePoints } from '@/lib/morpho/vault-summary';
 import { handleApiError } from '@/lib/utils/error-handler';
 import { createRateLimitMiddleware, RATE_LIMIT_REQUESTS_PER_MINUTE, MINUTE_MS } from '@/lib/utils/rate-limit';
 import type { MarketsSuppliedResponse, SuppliedMarket } from '@/lib/hooks/useMarkets';
@@ -96,7 +97,7 @@ function toSuppliedMarket(market: GraphMarket, marketKey: string): SuppliedMarke
           borrowApy: market.state.borrowApy ?? undefined,
           rewards:
             market.state.rewards?.map((r) => ({
-              supplyApr: r?.supplyApr ?? undefined,
+              supplyAprPercent: supplyAprFractionToPercentagePoints(r?.supplyApr),
             })) ?? undefined,
         }
       : undefined,
@@ -152,7 +153,7 @@ export async function GET(request: Request) {
           const supplyUsd = pos.state?.supplyAssetsUsd ?? 0;
           if (supplyUsd > 0) {
             totalSupplyUsd += supplyUsd;
-            allocations.push({ marketKey });
+            allocations.push({ marketKey, supplyUsd });
           }
 
           if (!marketsByKey.has(marketKey)) {
