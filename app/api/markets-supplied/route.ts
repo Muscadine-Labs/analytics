@@ -4,7 +4,7 @@ import { getAddress } from 'viem';
 import { getVaultAddressesForProtocolStats } from '@/lib/config/vaults';
 import { BASE_CHAIN_ID } from '@/lib/constants';
 import { morphoGraphQLClient } from '@/lib/morpho/graphql-client';
-import { supplyAprFractionToPercentagePoints } from '@/lib/morpho/vault-summary';
+import { mergeVaultAllocations, supplyAprFractionToPercentagePoints } from '@/lib/morpho/vault-summary';
 import { handleApiError } from '@/lib/utils/error-handler';
 import { createRateLimitMiddleware, RATE_LIMIT_REQUESTS_PER_MINUTE, MINUTE_MS } from '@/lib/utils/rate-limit';
 import type { MarketsSuppliedResponse, SuppliedMarket } from '@/lib/hooks/useMarkets';
@@ -13,7 +13,8 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 const ADAPTER_LIMIT = 50;
-const POSITION_LIMIT = 20;
+const POSITION_PAGE_SIZE = 100;
+const MAX_POSITION_PAGES = 20;
 
 type MarketState = {
   utilization?: number | null;
@@ -38,6 +39,7 @@ type GraphPosition = {
 
 type GraphAdapter = {
   __typename?: string | null;
+  address?: string | null;
   assetsUsd?: number | null;
   positions?: { items?: Array<GraphPosition | null> | null } | null;
 };
@@ -48,15 +50,22 @@ type GraphVault = {
 };
 
 const MARKETS_SUPPLIED_V2_QUERY = gql`
-  query MarketsSuppliedV2($address: String!, $chainId: Int!, $adapterLimit: Int!, $positionLimit: Int!) {
+  query MarketsSuppliedV2(
+    $address: String!
+    $chainId: Int!
+    $adapterLimit: Int!
+    $positionLimit: Int!
+    $positionSkip: Int!
+  ) {
     vault: vaultV2ByAddress(address: $address, chainId: $chainId) {
       address
       adapters(first: $adapterLimit) {
         items {
           __typename
+          address
           assetsUsd
           ... on MorphoMarketV1Adapter {
-            positions(first: $positionLimit) {
+            positions(first: $positionLimit, skip: $positionSkip) {
               items {
                 state { supplyAssetsUsd }
                 market {
@@ -104,6 +113,48 @@ function toSuppliedMarket(market: GraphMarket, marketKey: string): SuppliedMarke
   };
 }
 
+function adapterPositionCounts(vault: GraphVault | null | undefined): number[] {
+  return (vault?.adapters?.items ?? []).map((adapter) => adapter?.positions?.items?.length ?? 0);
+}
+
+function appendAdapterPositions(target: GraphVault, page: GraphVault | null | undefined) {
+  const existing = target.adapters?.items ?? [];
+  for (const adapter of page?.adapters?.items ?? []) {
+    if (!adapter?.address) continue;
+    const match = existing.find(
+      (item) => item?.address?.toLowerCase() === adapter.address?.toLowerCase()
+    );
+    const incoming = adapter.positions?.items ?? [];
+    if (!match || incoming.length === 0) continue;
+    match.positions = { items: [...(match.positions?.items ?? []), ...incoming] };
+  }
+}
+
+async function fetchSuppliedVault(address: string, chainId: number): Promise<GraphVault | null> {
+  const requestPage = (positionSkip: number) =>
+    morphoGraphQLClient.request<{ vault?: GraphVault | null }>(MARKETS_SUPPLIED_V2_QUERY, {
+      address,
+      chainId,
+      adapterLimit: ADAPTER_LIMIT,
+      positionLimit: POSITION_PAGE_SIZE,
+      positionSkip,
+    });
+
+  const first = await requestPage(0);
+  const vault = first.vault ?? null;
+  if (!vault) return null;
+
+  let latestCounts = adapterPositionCounts(vault);
+  for (let page = 1; page < MAX_POSITION_PAGES; page++) {
+    if (!latestCounts.some((count) => count >= POSITION_PAGE_SIZE)) break;
+    const next = await requestPage(page * POSITION_PAGE_SIZE);
+    latestCounts = adapterPositionCounts(next.vault);
+    appendAdapterPositions(vault, next.vault);
+  }
+
+  return vault;
+}
+
 export async function GET(request: Request) {
   const rateLimitMiddleware = createRateLimitMiddleware(
     RATE_LIMIT_REQUESTS_PER_MINUTE,
@@ -122,16 +173,8 @@ export async function GET(request: Request) {
     const vaultResults = await Promise.all(
       getVaultAddressesForProtocolStats().map(async (cfg) => {
         const address = getAddress(cfg.address);
-        const data = await morphoGraphQLClient.request<{ vault?: GraphVault | null }>(
-          MARKETS_SUPPLIED_V2_QUERY,
-          {
-            address,
-            chainId: cfg.chainId ?? BASE_CHAIN_ID,
-            adapterLimit: ADAPTER_LIMIT,
-            positionLimit: POSITION_LIMIT,
-          }
-        );
-        return { address, vault: data.vault };
+        const vault = await fetchSuppliedVault(address, cfg.chainId ?? BASE_CHAIN_ID);
+        return { address, vault };
       })
     );
 
@@ -139,8 +182,7 @@ export async function GET(request: Request) {
     const vaultAllocations: MarketsSuppliedResponse['vaultAllocations'] = [];
 
     for (const { address, vault } of vaultResults) {
-      const allocations: MarketsSuppliedResponse['vaultAllocations'][number]['allocations'] = [];
-      let totalSupplyUsd = 0;
+      const rawAllocations: MarketsSuppliedResponse['vaultAllocations'][number]['allocations'] = [];
 
       const adapters = vault?.adapters?.items ?? [];
       for (const adapter of adapters) {
@@ -152,8 +194,7 @@ export async function GET(request: Request) {
 
           const supplyUsd = pos.state?.supplyAssetsUsd ?? 0;
           if (supplyUsd > 0) {
-            totalSupplyUsd += supplyUsd;
-            allocations.push({ marketKey, supplyUsd });
+            rawAllocations.push({ marketKey, supplyUsd });
           }
 
           if (!marketsByKey.has(marketKey)) {
@@ -161,6 +202,9 @@ export async function GET(request: Request) {
           }
         }
       }
+
+      const allocations = mergeVaultAllocations(rawAllocations);
+      const totalSupplyUsd = allocations.reduce((sum, allocation) => sum + allocation.supplyUsd, 0);
 
       vaultAllocations.push({
         address,

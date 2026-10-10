@@ -29,7 +29,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { RatingBadge } from '@/components/morpho/RatingBadge';
 import { formatCompactUSD, formatPercentage } from '@/lib/format/number';
 import { useVaultList } from '@/lib/hooks/useProtocolStats';
-import { calculateVaultSummaryMetrics } from '@/lib/morpho/vault-summary';
+import { calculateVaultSummaryMetrics, weightedVaultRating } from '@/lib/morpho/vault-summary';
 import { BASE_CHAIN_ID, getMorphoMarketUrl } from '@/lib/constants';
 import { AppShell } from '@/components/layout/AppShell';
 
@@ -108,11 +108,7 @@ export default function VaultsPage() {
         mergedMarkets
       );
 
-      const avgRating =
-        vaultMarkets.filter((m) => m.rating).length > 0
-          ? vaultMarkets.filter((m) => m.rating).reduce((sum, m) => sum + (m.rating ?? 0), 0) /
-            vaultMarkets.filter((m) => m.rating).length
-          : null;
+      const rating = weightedVaultRating(allocationShare, vaultMarkets);
 
       return {
         vault,
@@ -120,7 +116,7 @@ export default function VaultsPage() {
         allocationShare,
         weightedUtilization,
         weightedRewardApr,
-        avgRating,
+        rating,
         markets: vaultMarkets,
       };
     });
@@ -185,8 +181,8 @@ export default function VaultsPage() {
                                 </CardDescription>
                               ) : null}
                             </div>
-                            {vaultSummary.avgRating && (
-                              <RatingBadge rating={vaultSummary.avgRating} className="px-3 py-1.5 text-sm" />
+                            {vaultSummary.rating != null && (
+                              <RatingBadge rating={vaultSummary.rating} className="px-3 py-1.5 text-sm" />
                             )}
                           </div>
                         </CardHeader>
