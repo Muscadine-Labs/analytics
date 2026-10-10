@@ -28,6 +28,7 @@ import {
   type OracleTimestampData,
 } from '@/lib/morpho/oracle-utils';
 import type { Address } from 'viem';
+import { weightedSupplyApy } from '@/lib/morpho/vault-summary';
 
 type AdapterType = 'MetaMorphoAdapter' | 'MorphoMarketV1Adapter' | 'MorphoVaultV2Adapter' | 'Unknown';
 
@@ -204,10 +205,17 @@ export type V2VaultRiskResponse = {
 
 const ADAPTER_LIMIT = 50;
 const CAP_LIMIT = 50;
-const POSITION_LIMIT = 20;
+const POSITION_PAGE_SIZE = 20;
+const MAX_POSITION_PAGES = 25;
 
 const VAULT_V2_RISK_QUERY = gql`
-  query VaultV2Risk($address: String!, $chainId: Int!, $adapterLimit: Int!, $positionLimit: Int!) {
+  query VaultV2Risk(
+    $address: String!
+    $chainId: Int!
+    $adapterLimit: Int!
+    $positionLimit: Int!
+    $positionSkip: Int!
+  ) {
     vault: vaultV2ByAddress(address: $address, chainId: $chainId) {
       address
       totalAssetsUsd
@@ -260,7 +268,7 @@ const VAULT_V2_RISK_QUERY = gql`
             }
           }
           ... on MorphoMarketV1Adapter {
-            positions(first: $positionLimit) {
+            positions(first: $positionLimit, skip: $positionSkip) {
               items {
                 state {
                   supplyAssets
@@ -369,16 +377,13 @@ function pickUnderlyingVaultSupplyApy(state?: {
   return null;
 }
 
-function weightedMarketSupplyApy(
-  markets: Array<{ allocationUsd?: number; market?: { state?: { supplyApy?: number | null } | null } }>
-): number | null {
-  const totalAlloc = markets.reduce((s, m) => s + (m.allocationUsd ?? 0), 0);
-  if (totalAlloc <= 0) return null;
-  const weighted = markets.reduce(
-    (s, m) => s + ((m.market?.state?.supplyApy ?? 0) * (m.allocationUsd ?? 0)),
-    0
+function marketSupplyApy(markets: V2MarketRiskData[]): number | null {
+  return weightedSupplyApy(
+    markets.map((market) => ({
+      supplyUsd: market.allocationUsd ?? 0,
+      supplyApy: market.market?.state?.supplyApy,
+    }))
   );
-  return weighted / totalAlloc;
 }
 
 function getGradeFromScore(score: number): MarketRiskGrade {
@@ -759,7 +764,7 @@ async function computeAdapterRisk(
     );
 
     const { weightedScore, grade } = computeWeightedRisk(marketRisks);
-    const apy = weightedMarketSupplyApy(marketRisks);
+    const apy = marketSupplyApy(marketRisks);
     const adapterLabel =
       isLiquidityAdapter && liquidityMarket?.label
         ? liquidityMarket.label
@@ -791,6 +796,52 @@ function sumTokenAmounts(
   const right = parseRawTokenAmount(b);
   if (left == null && right == null) return null;
   return String((left ?? 0n) + (right ?? 0n));
+}
+
+function adapterPositionCounts(vault: GraphVaultResponse['vault']): number[] {
+  return (vault?.adapters?.items ?? []).map((adapter) => adapter?.positions?.items?.length ?? 0);
+}
+
+function appendAdapterPositions(
+  target: NonNullable<GraphVaultResponse['vault']>,
+  page: GraphVaultResponse['vault']
+) {
+  const existing = target.adapters?.items ?? [];
+  for (const adapter of page?.adapters?.items ?? []) {
+    if (!adapter?.address) continue;
+    const match = existing.find(
+      (item) => item?.address?.toLowerCase() === adapter.address.toLowerCase()
+    );
+    const incoming = adapter.positions?.items ?? [];
+    if (!match || incoming.length === 0) continue;
+    if (!match.positions) match.positions = { items: [] };
+    match.positions.items.push(...incoming);
+  }
+}
+
+async function fetchVaultRisk(address: string, chainId: number): Promise<GraphVaultResponse> {
+  const requestPage = (positionSkip: number) =>
+    morphoGraphQLClient.request<GraphVaultResponse>(VAULT_V2_RISK_QUERY, {
+      address,
+      chainId,
+      adapterLimit: ADAPTER_LIMIT,
+      positionLimit: POSITION_PAGE_SIZE,
+      positionSkip,
+    });
+
+  const data = await requestPage(0);
+  const vault = data.vault;
+  if (!vault) return data;
+
+  let latestCounts = adapterPositionCounts(vault);
+  for (let page = 1; page < MAX_POSITION_PAGES; page++) {
+    if (!latestCounts.some((count) => count >= POSITION_PAGE_SIZE)) break;
+    const next = await requestPage(page * POSITION_PAGE_SIZE);
+    latestCounts = adapterPositionCounts(next.vault);
+    appendAdapterPositions(vault, next.vault);
+  }
+
+  return data;
 }
 
 function computeWeightedRisk(markets: V2MarketRiskData[]): { weightedScore: number; grade: MarketRiskGrade } {
@@ -848,12 +899,7 @@ export async function GET(
     }
 
     const [data, capData] = await Promise.all([
-      morphoGraphQLClient.request<GraphVaultResponse>(VAULT_V2_RISK_QUERY, {
-        address,
-        chainId: cfg.chainId ?? BASE_CHAIN_ID,
-        adapterLimit: ADAPTER_LIMIT,
-        positionLimit: POSITION_LIMIT,
-      }),
+      fetchVaultRisk(address, cfg.chainId ?? BASE_CHAIN_ID),
       morphoGraphQLClient.request<Pick<GraphVaultResponse, 'vault'>>(VAULT_V2_CAP_MARKETS_QUERY, {
         address,
         chainId: cfg.chainId ?? BASE_CHAIN_ID,
