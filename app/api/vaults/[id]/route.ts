@@ -5,7 +5,7 @@ import { handleApiError, AppError } from '@/lib/utils/error-handler';
 import { createRateLimitMiddleware, RATE_LIMIT_REQUESTS_PER_MINUTE, MINUTE_MS } from '@/lib/utils/rate-limit';
 import { morphoGraphQLClient } from '@/lib/morpho/graphql-client';
 import { collectVaultV2DepositorAddresses } from '@/lib/morpho/v2-positions';
-import { fetchFeeWrapperLayer } from '@/lib/morpho/fee-wrapper-layer';
+import { feeWrapperDepositsVisible, fetchFeeWrapperLayer } from '@/lib/morpho/fee-wrapper-layer';
 import { gql } from 'graphql-request';
 import { getAddress, isAddress } from 'viem';
 
@@ -153,10 +153,13 @@ export async function GET(
     ]);
     const txs = (data.txs?.items ?? []).filter((t): t is TxItem => t !== null);
 
-    const feeWrapper =
+    const feeWrapperWithDepositors =
       feeWrapperLayer && wrapperDepositors
         ? { ...feeWrapperLayer, depositors: wrapperDepositors.size }
         : feeWrapperLayer;
+    const feeWrapper = feeWrapperDepositsVisible(feeWrapperWithDepositors)
+      ? feeWrapperWithDepositors
+      : null;
 
     const tvlUsd = mv.totalAssetsUsd ?? null;
     const totalAssetsRaw = mv.totalAssets != null ? String(mv.totalAssets) : null;

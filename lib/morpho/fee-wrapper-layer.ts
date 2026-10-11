@@ -10,6 +10,20 @@ import {
   mergeUnderlyingVaultInfo,
 } from '@/lib/morpho/vault-v2-adapter';
 
+/** Wrapper cards stay hidden at or below this deposit size. */
+export const WRAPPER_MIN_DISPLAY_DEPOSITS_USD = 100;
+
+/** True when the wrapper's USD deposits are strictly above the display floor. */
+export function feeWrapperDepositsVisible(
+  layer: { tvl?: number | null } | null | undefined
+): boolean {
+  return (
+    typeof layer?.tvl === 'number' &&
+    Number.isFinite(layer.tvl) &&
+    layer.tvl > WRAPPER_MIN_DISPLAY_DEPOSITS_USD
+  );
+}
+
 /** Public fee-wrapper facts attached to an underlying vault page — not a peer vault. */
 export type FeeWrapperLayer = {
   address: string;
@@ -160,6 +174,7 @@ export function attachFeeWrappersToUnderlyings<
   const byAddress = new Map(vaults.map((v) => [v.address.toLowerCase(), v]));
 
   for (const [wrapperAddress, layer] of wrappers) {
+    if (!feeWrapperDepositsVisible(layer)) continue;
     const inner =
       layer.innerVault?.address ||
       byAddress.get(wrapperAddress.toLowerCase())?.underlyingAddress ||
